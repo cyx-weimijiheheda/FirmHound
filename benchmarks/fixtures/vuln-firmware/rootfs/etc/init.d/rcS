@@ -1,0 +1,13 @@
+#!/bin/sh
+# Fixture startup script. It deliberately starts every fixture daemon so
+# "handler evidenced in startup scripts" holds for the analysis (see
+# EXPECTED.md). It also enables telnet with no password check (V8).
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+
+telnetd -l /bin/sh &
+/usr/sbin/httpd &
+/usr/sbin/upnpd &
+/usr/sbin/wandetect &
+
+echo "fixture services started"

@@ -1,0 +1,4 @@
+FIXTURE PLACEHOLDER — not a real key.
+Real products must never ship a shared private host key in the firmware
+image; this placeholder marks the spot where that classic finding (V10)
+would live, without embedding actual key material in a test fixture.

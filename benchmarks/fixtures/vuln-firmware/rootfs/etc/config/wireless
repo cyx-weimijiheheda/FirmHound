@@ -1,0 +1,11 @@
+# Fixture wireless config — intentionally weak (see EXPECTED.md):
+#   V9: factory-default WPA passphrase left unchanged, in plaintext.
+config wifi-device 'radio0'
+	option type 'fixture'
+	option channel '6'
+
+config wifi-iface 'default_radio0'
+	option device 'radio0'
+	option ssid 'FixtureRouter'
+	option encryption 'psk2'
+	option key 'defaultpass'
