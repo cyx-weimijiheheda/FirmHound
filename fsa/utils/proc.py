@@ -50,6 +50,11 @@ def run_command(
     error in ``stderr``, so callers that probe for optional external tools
     degrade instead of crashing.
 
+    The child's stdin is always ``/dev/null``: several external tools
+    (7z during extraction, for one) read from stdin when it is a pipe and
+    block forever if the caller's stdin never reaches EOF, hanging the
+    whole pipeline instead of timing out.
+
     Args:
         cmd: Command and arguments as a list, or a string (split with shlex).
         cwd: Working directory for the child process.
@@ -81,6 +86,7 @@ def run_command(
             cwd=cwd,
             timeout=timeout,
             shell=shell,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             errors="replace",

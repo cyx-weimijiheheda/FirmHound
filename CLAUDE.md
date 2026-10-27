@@ -8,7 +8,7 @@ FirmHound（固件猎犬）——IoT 固件漏洞挖掘自动化流水线：`解
 ```bash
 make dev                         # 建 .venv + 装依赖 + editable 安装
 make doctor                      # 环境自检
-make test                        # 单元测试（460 passed / 1 skipped 为当前基线）
+make test                        # 单元测试（462 passed / 1 skipped 为当前基线）
 make lint                        # ruff（版本按 requirements.txt）
 
 fsa analyze tmp/unpacked/x/squashfs-root --input-type rootfs \
