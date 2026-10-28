@@ -54,6 +54,10 @@ make firmrec-doctor                          # 检查 repo/python/Ghidra/Postgre
 make firmrec-smoke RUN_DIR=runs/<id>         # 对已有 run 执行
 ```
 
+本机若已按项目约定准备 LLVM 15、Z3 与 KLEE，可直接使用
+[`../guide/lab-firmware.md`](../guide/lab-firmware.md) 中的 native 配置运行 KLEE；
+该配置默认只打开 KLEE，不会自动启用 SaTC、FirmRec 或 BOND。
+
 探测不会执行分析，也不会因缺失返回非零：
 
 ```bash
@@ -75,7 +79,7 @@ python scripts/run_pipeline.py --benchmark-fixtures --depth full --out-dir runs/
 |---|---|---|---|
 | SaTC | Docker、Ghidra、angr | skipped | 未跑真实镜像时不能声称完成跨函数实测 |
 | FirmRec | 本地：Python 3.9 + Ghidra 10.2.2 + PostgreSQL；或 Docker 镜像；已知漏洞签名 | skipped/FORCED_DISABLE | 不能计入 Blind 指标；`our` fixture 模式没有漏洞固件时不会伪造签名 |
-| KLEE | LLVM bitcode、KLEE/Z3 | skipped/timeout | harness infeasible 不等于真实固件安全 |
+| KLEE | LLVM bitcode、KLEE/Z3 | skipped/timeout/failed | harness 可达性只验证合成模型；infeasible 不等于真实固件安全 |
 | mini-BOND | 可选 Ghidra、隔离仿真目标、安全门 | skipped/unsafe | 内置限界 HTTP 探针；模拟模式不生成 finding |
 
 当前仓库提供完整 Adapter、Parser、fixture、融合与降级测试；真实工具复现数据必须在

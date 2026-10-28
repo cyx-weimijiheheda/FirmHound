@@ -14,7 +14,7 @@ PY     := $(VENV)/bin/python
 
 .DEFAULT_GOAL := help
 .PHONY: help venv dev test test-all integration ext-smoke firmrec-doctor \
-        firmrec-smoke lint format smoke doctor clean clean-venv
+        firmrec-smoke lint format smoke doctor lab-firmware clean clean-venv
 
 help: ## 列出可用目标
 	@$(PYTHON) scripts/dev.py help
@@ -54,6 +54,9 @@ smoke: venv ## 用合成 rootfs 跑一次端到端
 
 doctor: venv ## 环境自检（发行版、工具、Schema）
 	@$(PY) -m fsa.cli doctor
+
+lab-firmware: ## 构建本地多漏洞合成固件样本
+	@$(PYTHON) scripts/build_lab_firmware.py
 
 clean: ## 清理构建与缓存产物（保留 .venv）
 	@$(PYTHON) scripts/dev.py clean

@@ -428,6 +428,8 @@ RANK/Verifier → mini-BOND 约束验证。FirmRec 是已知漏洞复发扫描�
 `backend: auto | local | docker`，原生安装（不用 Docker）见
 [`docs/guide/firmrec-native.md`](docs/guide/firmrec-native.md)；只有 rootfs 时会打 tar
 兜底并在报告中记 limitation。安装、能力边界和复现状态见 `docs/external/README.md`。
+本地多漏洞回归固件与 native KLEE 示例见
+[`docs/guide/lab-firmware.md`](docs/guide/lab-firmware.md)。
 
 ## 受控自主执行
 

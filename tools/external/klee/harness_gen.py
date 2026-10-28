@@ -32,6 +32,7 @@ Design rules (non-negotiable):
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -237,9 +238,19 @@ def _template_for(spec: HarnessSpec) -> str:
     return _KIND_TO_TEMPLATE.get(kind, _CMDI_TEMPLATE)
 
 
+def _safe_c_identifier(value: str) -> str:
+    """Keep recovered names from producing invalid or colliding C declarations."""
+    name = re.sub(r"[^A-Za-z0-9_]", "_", value)
+    if not name:
+        return "audited_func"
+    if name[0].isdigit():
+        name = f"_{name}"
+    return name
+
+
 def _func_decl(spec: HarnessSpec, buf_size: int) -> str:
     """Render the audited-function definition that funnels input into the sink."""
-    fn = spec.func_name or "audited_func"
+    fn = _safe_c_identifier(spec.func_name or "audited_func")
     buf = buf_size
     if spec.vuln_class == "command_injection":
         return (
@@ -281,7 +292,7 @@ def render_harness(spec: HarnessSpec) -> str:
     buf_size = int(spec.buf_size) if spec.buf_size else DEFAULT_BUF_SIZE
     input_size = int(spec.input_size) if spec.input_size else DEFAULT_INPUT_SIZE
     func_decl = _func_decl(spec, buf_size)
-    func_call = f"    {spec.func_name or 'audited_func'}(input);"
+    func_call = f"    {_safe_c_identifier(spec.func_name or 'audited_func')}(input);"
     source = (
         template
         .replace("__FUNC_DECL__", func_decl)
@@ -386,7 +397,10 @@ def spec_from_candidate(
     sink_func = str(sink.get("function") or candidate.get("sink_func") or "system")
     vuln_class = str(candidate.get("vuln_class") or "command_injection")
     sink_type = str(sink.get("type") or _sink_type_for(vuln_class, sink_func))
-    func_name = str(candidate.get("function") or sink.get("function") or "audited_func")
+    # The recovered function is often the libc sink itself (for example
+    # ``fopen@GLIBC_2.2.5``).  S2 is a synthetic model, so use a private,
+    # stable wrapper name and retain the recovered name in ``sink_func``.
+    func_name = "__fsa_audited_func"
     buf_size = candidate.get("buf_size")
     if buf_size is None:
         buf_size = sink.get("buf_size")

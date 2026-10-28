@@ -72,6 +72,17 @@ def test_spec_from_candidate_recovers_sink():
     assert spec.sink_func == "system"
     assert spec.vuln_class == "command_injection"
     assert spec.buf_size == 128
+    assert spec.func_name == "__fsa_audited_func"
+
+
+def test_synthetic_name_avoids_libc_sink_collision():
+    spec = spec_from_candidate({
+        "vuln_class": "path_traversal",
+        "sink": {"function": "fopen@GLIBC_2.2.5", "type": "file_access"},
+    })
+    src = render_harness(spec)
+    assert "void __fsa_audited_func(" in src
+    assert "void fopen(" not in src
 
 
 def test_generate_harness_writes_c(tmp_path):

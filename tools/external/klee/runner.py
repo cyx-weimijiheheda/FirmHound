@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -67,6 +69,8 @@ class KleeAnalyzer(ExternalAnalyzer):
         self.max_depth: int = int(cfg.get("max_depth", 200))
         self.search: str = str(cfg.get("search", "dfs"))
         self.llvm: str = str(cfg.get("llvm", "16"))
+        self.klee_bin: str = str(cfg.get("klee_bin", "klee"))
+        self.clang_bin: str = str(cfg.get("clang_bin", "clang"))
 
     # -- probe ------------------------------------------------------------- #
 
@@ -90,8 +94,8 @@ class KleeAnalyzer(ExternalAnalyzer):
                 available=True, version=self._image_version(), backend="docker", notes=detail
             )
         # local: a bare `klee --version` is the availability signal.
-        probe_cmd = ["klee", "--version"]
-        res = run_local(probe_cmd, timeout=30.0)
+        probe_cmd = [self.klee_bin, "--version"]
+        res = run_local(probe_cmd, timeout=30.0, env=self._local_env())
         if res.status == "missing":
             return ProbeResult(
                 available=False,
@@ -115,13 +119,28 @@ class KleeAnalyzer(ExternalAnalyzer):
         if self.backend in {"local", "docker"}:
             return self.backend
         # auto: prefer a native Linux toolchain, then docker if the image is present.
-        if run_local(["klee", "--version"], timeout=10.0).status == "ok":
+        if run_local(
+            [self.klee_bin, "--version"], timeout=10.0, env=self._local_env()
+        ).status == "ok":
             return "local"
         ok, _ = docker_available()
         if ok and docker_image_exists(self.image):
             return "docker"
         # Most likely to surface a clear "missing" probe on a bare host.
         return "local"
+
+    def _local_env(self) -> dict[str, str]:
+        """Add project-local LLVM/Z3 libraries without changing the parent shell."""
+        repo_root = Path(__file__).resolve().parents[3]
+        lib_dirs = [
+            repo_root / "vendor" / "klee-deps15" / "usr" / "lib64" / "llvm15" / "lib",
+            repo_root / "vendor" / "klee-deps15" / "usr" / "lib64",
+        ]
+        existing = os.environ.get("LD_LIBRARY_PATH", "")
+        paths = [str(path) for path in lib_dirs if path.is_dir()]
+        if existing:
+            paths.append(existing)
+        return {"LD_LIBRARY_PATH": ":".join(paths)} if paths else {}
 
     def _image_version(self) -> str:
         from fsa.utils.proc import run_command
@@ -225,7 +244,12 @@ class KleeAnalyzer(ExternalAnalyzer):
 
         for dir_name, entry in harness_map.items():
             out_dir = out_root / dir_name
-            out_dir.mkdir(parents=True, exist_ok=True)
+            # KLEE requires --output-dir to not exist.  This exact directory is
+            # an idempotent generated artifact, so remove only its prior
+            # contents before a rerun; the parent remains the run workspace.
+            if out_dir.exists():
+                with contextlib.suppress(OSError):
+                    shutil.rmtree(out_dir)
             log_path = ctx.workdir / "logs" / f"{dir_name}.log"
 
             bc = self._ensure_bc(entry, backend, log_path)
@@ -276,7 +300,18 @@ class KleeAnalyzer(ExternalAnalyzer):
             log_path.write_text("harness .c missing; cannot compile", encoding="utf-8")
             return None
         bc_path = c_path.with_suffix(".bc")
-        host_cmd = ["clang", "-emit-llvm", "-c", "-O0", "-g", str(c_path), "-o", str(bc_path)]
+        host_cmd = [
+            self.clang_bin,
+            "-emit-llvm",
+            "-c",
+            "-O0",
+            "-g",
+            "-I",
+            str(Path(__file__).resolve().parents[3] / "vendor" / "klee-install15" / "include"),
+            str(c_path),
+            "-o",
+            str(bc_path),
+        ]
         if backend == "docker":
             # Compile inside the container: mount the .c's parent to /work and use
             # container paths so clang resolves the bitcode correctly.
@@ -290,7 +325,7 @@ class KleeAnalyzer(ExternalAnalyzer):
                 timeout=300.0,
             )
         else:
-            res = run_local(host_cmd, timeout=300.0)
+            res = run_local(host_cmd, timeout=300.0, env=self._local_env())
 
         if res.status == "ok" and bc_path.exists():
             return bc_path
@@ -313,7 +348,7 @@ class KleeAnalyzer(ExternalAnalyzer):
     def _run_klee(self, bc: Path, out_dir: Path, backend: str, log_path: Path) -> bool:
         """Run KLEE on ``bc`` into ``out_dir``; return True if it produced artifacts."""
         cmd = [
-            "klee",
+            self.klee_bin,
             f"--max-time={self.max_time_s}s",
             f"--max-depth={self.max_depth}",
             f"--max-forks={self.max_forks}",
@@ -330,7 +365,7 @@ class KleeAnalyzer(ExternalAnalyzer):
                 timeout=float(self.timeout_s),
             )
         else:
-            res = run_local(cmd, timeout=float(self.timeout_s))
+            res = run_local(cmd, timeout=float(self.timeout_s), env=self._local_env())
 
         with contextlib.suppress(OSError):
             log_path.write_text(

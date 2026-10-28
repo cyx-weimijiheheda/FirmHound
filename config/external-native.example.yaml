@@ -1,0 +1,24 @@
+# Local native external-tool profile. Copy to a temporary config path when
+# running an external analyzer; do not enable this profile in CI by default.
+external:
+  enabled: true
+  workdir: ./tmp/external
+  timeout_s: 3600
+  satc:
+    enabled: false
+  firmrec:
+    enabled: false
+    backend: local
+  klee:
+    enabled: true
+    backend: local
+    klee_bin: ./vendor/klee-install15/bin/klee
+    clang_bin: ./vendor/klee-deps15/usr/lib64/llvm15/bin/clang
+    llvm: "15"
+    solver: z3
+    max_time_s: 120
+    max_forks: 64
+    max_depth: 200
+    search: dfs
+  bond:
+    enabled: false
