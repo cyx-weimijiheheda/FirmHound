@@ -25,6 +25,7 @@ tags: [report, verdict, compliance, m10, redaction]
 - `artifacts/external_findings/fused.json`、`recurrence_findings.json`、
   `unified_candidates.json`（外部轨，可选）
 - `artifacts/agent_trace.json`（自主分析轨迹，可选）
+- `artifacts/decompile.json`、`state/run_state.json`（反编译/证据边界，可选）
 
 ## 输出
 
@@ -59,6 +60,16 @@ tags: [report, verdict, compliance, m10, redaction]
 22. 修复建议
 23. 最终结论
 24. 自主分析轨迹
+
+各节证据边界：
+
+- 第 4 节如实写明 Agent 模型是否参与、runtime/model/调用次数；未调用模型时明确写“未调用模型”。
+- 第 5 节写输入类型、解包方式、rootfs 评分/置信度、重复候选抑制数、degraded。
+- 第 14 节给出 Top 10 证据链表：二进制/入口、Source→Sink、调用链、认证、证据/反证/裁决。
+- 第 15 节给出裁决表、reviewed/unreviewed 覆盖、排除措辞、孤立裁决 ID。
+- 第 18 节合并 all.json 与各工具产物，列缺失/禁用原因；FirmRec 不计入规范化计数。
+- 第 20 节写 evidence 引用数 vs 落盘数。
+- 第 21 节写反编译 fallback、架构/调用链能力、候选可追溯性、外部器、模型边界、accepted=0 语义。
 
 ## 执行流程
 

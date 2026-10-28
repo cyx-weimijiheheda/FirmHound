@@ -210,11 +210,18 @@ def _trace_skeleton(
     }
 
 
-def _write_trace(run: Path, trace: dict[str, Any]) -> Path:
+def _write_trace(
+    run: Path,
+    trace: dict[str, Any],
+    *,
+    visualize: bool = True,
+) -> Path:
     trace["finished_at"] = _now()
     validate(trace, schema_name="agent_trace")
     path = run / "artifacts" / "agent_trace.json"
     save_json(path, trace)
+    if not visualize:
+        return path
     try:
         write_agent_visualization(run, trace)
     except Exception as exc:  # noqa: BLE001 - visualization must not fail analysis
@@ -701,7 +708,11 @@ def run_agent_loop(
             model_info["calls"] = budget.stage_calls_used
             model_info["tokens"] = budget.stage_tokens_used
             _finalize_trace(trace, states, stop_reason="running", status="partial")
-            _write_trace(run, trace)
+            _write_trace(
+                run,
+                trace,
+                visualize=(new_steps == 1 or new_steps % every_steps == 0),
+            )
     except Exception as exc:  # noqa: BLE001 - stage degrades instead of aborting the run
         trace["limitations"].append(f"agent loop failed: {type(exc).__name__}: {exc}")
         _finalize_trace(trace, states, stop_reason="internal error", status="failed")

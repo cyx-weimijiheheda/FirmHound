@@ -32,6 +32,10 @@ from capstone import CS_ARCH_ARM, CS_MODE_ARM, CS_MODE_LITTLE_ENDIAN, Cs
 
 from tools.binary.elf_read import load_elf
 
+# Canonical architecture names (from tools.binary.elf_read.canonical_arch) that
+# the current recovery implementation can disassemble.
+SUPPORTED_ARCHES = frozenset({"arm", "arm32"})
+
 DEFAULT_SOURCE_APIS = (
     "websGetVar",
     "websGetVar64",

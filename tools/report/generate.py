@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fsa.schemas.loader import validate
-from fsa.utils.jsonio import save_json
+from fsa.utils.jsonio import load_json, save_json
 from tools.external.bond.sanitize import sanitize_poc
 from tools.pipeline_context import load_artifact, load_task, run_path
+from tools.report.grounding import build_grounding
 
 _SECTIONS = [
     "执行摘要",
@@ -63,6 +65,50 @@ def _finding_count(payload: Any) -> int:
 _EXTERNAL_TOOL_NAMES = ("satc", "firmrec", "klee", "bond")
 
 
+def _load_external_bundle(run: Path) -> dict[str, Any]:
+    """Merge all.json with per-tool files without double counting FirmRec."""
+    base = load_artifact(run, "external_findings/all.json", {})
+    payload: dict[str, Any] = dict(base) if isinstance(base, dict) else {}
+    per_tool: dict[str, Any] = dict(payload.get("per_tool") or {})
+    extra_findings = 0
+    for tool in _EXTERNAL_TOOL_NAMES:
+        if tool in per_tool:
+            continue
+        document = load_artifact(run, f"external_findings/{tool}.json", {})
+        if not isinstance(document, dict) or not document:
+            per_tool[tool] = {
+                "status": "skipped",
+                "limitation": "no artifact in this run (tool not enabled or did not run)",
+            }
+            continue
+        per_tool[tool] = document
+        if tool != "firmrec":
+            # KLEE/BOND run outside EXTERNAL_ANALYSIS and write their own
+            # artifacts; count them, but never fold recurrence-only FirmRec
+            # findings into the normalized external total.
+            extra_findings += _finding_count(document)
+    if per_tool:
+        payload["per_tool"] = per_tool
+    list_sources = {
+        name: info
+        for name, info in per_tool.items()
+        if isinstance(info, dict) and isinstance(info.get("findings"), list)
+    }
+    if list_sources:
+        # Recompute from per-tool lists so recurrence-only FirmRec findings do
+        # not inflate section 18; section 19 reads them separately.
+        payload["findings"] = sum(
+            _finding_count(info)
+            for name, info in list_sources.items()
+            if name != "firmrec"
+        )
+    elif extra_findings:
+        payload["findings"] = _finding_count(base) + extra_findings
+    elif per_tool and (not isinstance(base, dict) or not base):
+        payload["findings"] = 0
+    return payload
+
+
 def _tool_statuses(payload: Any) -> str:
     """Summarize per-tool statuses from ``all.json`` (``per_tool``) or legacy keys."""
     names = "/".join(_EXTERNAL_TOOL_NAMES)
@@ -92,19 +138,24 @@ def _tool_statuses(payload: Any) -> str:
 
 
 def _external_unavailable(payload: Any) -> bool:
-    """True when no external analyzer contributed any corroborating result."""
+    """True when no non-recurrence analyzer contributed a corroborating result."""
     if _finding_count(payload) > 0:
         return False
     if not isinstance(payload, dict) or not payload:
         return True
-    if payload.get("status") == "skipped":
-        return True
     per_tool = payload.get("per_tool")
     if isinstance(per_tool, dict) and per_tool:
+        counted = {
+            name: info for name, info in per_tool.items() if name != "firmrec"
+        }
+        if not counted:
+            return True
         return all(
             (info.get("status") if isinstance(info, dict) else str(info)) != "ok"
-            for info in per_tool.values()
+            for info in counted.values()
         )
+    if payload.get("status") == "skipped":
+        return True
     return payload.get("status") != "ok"
 
 
@@ -117,6 +168,267 @@ def _external_section(payload: Any) -> str:
             "候选结论仅依据静态分析与反证审查。"
         )
     return text
+
+
+def _cell(value: Any, limit: int = 80) -> str:
+    """Render one safe Markdown table cell; never include a raw payload."""
+    text = " ".join(str(value if value not in (None, "") else "?").split())
+    text = text.replace("|", "\\|")
+    return text[:limit]
+
+
+def _source_label(candidate: dict[str, Any]) -> str:
+    source = candidate.get("source") or {}
+    return str(
+        source.get("api")
+        or source.get("name")
+        or source.get("type")
+        or ("string" if source.get("string") else "?")
+    )
+
+
+def _sink_label(candidate: dict[str, Any]) -> str:
+    sink = candidate.get("sink") or {}
+    return str(sink.get("function") or sink.get("type") or "?")
+
+
+def _entry_label(candidate: dict[str, Any]) -> str:
+    entry = candidate.get("entry") or {}
+    return str(
+        entry.get("handler")
+        or entry.get("route")
+        or candidate.get("surface_id")
+        or "未映射"
+    )
+
+
+def _auth_label(candidate: dict[str, Any]) -> str:
+    required = (candidate.get("authorization") or {}).get("required")
+    if required is True:
+        return "需要"
+    if required is False:
+        return "不需要"
+    return "未知"
+
+
+def _evidence_table(
+    ranked: list[dict[str, Any]],
+    verdicts: list[dict[str, Any]],
+    summaries: list[dict[str, Any]],
+) -> str:
+    """Top-10 candidates with the evidence chain needed to reproduce a decision."""
+    if not ranked:
+        return "无候选。"
+    summary_by_id = {
+        str(item.get("binary_id")): item for item in summaries if isinstance(item, dict)
+    }
+    verdict_by_id = {
+        str(item.get("candidate_id")): item for item in verdicts if isinstance(item, dict)
+    }
+    lines = [
+        "下表列出风险分最高的 10 个候选及其解包来源。完整集合见 artifacts/ranking.json，"
+        "证据正文见 evidence/ 下逐个 JSON 文件。",
+        "",
+        "| 候选 | 分数 | 二进制 / 入口 | Source → Sink | 调用链 | 认证 | 证据 | 反证 / 裁决 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for candidate in ranked[:10]:
+        candidate_id = str(candidate.get("candidate_id") or "?")
+        summary = summary_by_id.get(str(candidate.get("binary_id") or ""), {})
+        binary = str(summary.get("path") or candidate.get("binary_id") or "?")
+        entry = _entry_label(candidate)
+        chain_length = len(candidate.get("call_chain") or [])
+        chain = f"{chain_length} 层" if chain_length else "未证明"
+        counter = candidate.get("counterevidence") or []
+        verdict = verdict_by_id.get(candidate_id, {})
+        action = verdict.get("action") or candidate.get("conclusion_category") or "未复核"
+        counter_text = ", ".join(str(item) for item in counter[:3]) or "无"
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _cell(candidate_id, 40),
+                    _cell(f"{candidate.get('risk_score')}/{candidate.get('risk_level')}", 20),
+                    _cell(f"{binary} / {entry}", 70),
+                    _cell(f"{_source_label(candidate)} → {_sink_label(candidate)}", 70),
+                    _cell(chain, 20),
+                    _cell(_auth_label(candidate), 10),
+                    _cell(len(candidate.get("evidence") or []), 10),
+                    _cell(f"{counter_text}; {action}", 90),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _verdict_table(
+    verdicts: list[dict[str, Any]],
+    candidate_total: int,
+    grounding: dict[str, Any],
+) -> str:
+    """Verdicts plus coverage and explicit exclusion wording."""
+    reviewed = len(verdicts)
+    unreviewed = max(0, candidate_total - reviewed)
+    if not verdicts:
+        return (
+            f"已复核：0；未复核：{candidate_total}。VERIFY_TOP_K 未完成或未产生裁决，"
+            "不能声明确认漏洞。"
+        )
+    actions: dict[str, int] = {}
+    for verdict in verdicts:
+        action = str(verdict.get("action") or "UNKNOWN")
+        actions[action] = actions.get(action, 0) + 1
+    lines = [
+        f"已复核：{reviewed}/{candidate_total}；未复核：{unreviewed}；"
+        f"动作分布：{', '.join(f'{key}={value}' for key, value in sorted(actions.items()))}。"
+        "“排除/降级”指本轮证据门槛下不采纳，不代表漏洞不存在。",
+    ]
+    orphans = grounding.get("orphan_verdicts") or []
+    if orphans:
+        lines.append(
+            "裁决与当前候选集不匹配的 ID：" + ", ".join(str(item) for item in orphans[:10])
+        )
+    lines.extend(
+        [
+            "",
+            "| 候选 | 动作 | 原分 → 修正分 | 理由 | 反证 |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    for verdict in verdicts:
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _cell(verdict.get("candidate_id"), 40),
+                    _cell(verdict.get("action"), 16),
+                    _cell(
+                        f"{verdict.get('original_score')} → {verdict.get('revised_score')}",
+                        24,
+                    ),
+                    _cell("；".join(verdict.get("reasons") or []), 120),
+                    _cell(
+                        ", ".join(str(item) for item in (verdict.get("counterevidence") or [])[:4]),
+                        80,
+                    ),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _environment_summary(grounding: dict[str, Any]) -> str:
+    """Describe actual model/external usage instead of claiming blanket offline."""
+    external_tools = grounding.get("external_tools") or []
+    active_external = [
+        item
+        for item in external_tools
+        if item.get("status") in {"ok", "degraded", "partial"}
+    ]
+    if grounding.get("model_used"):
+        model = f"{grounding.get('model_provider') or '?'}/{grounding.get('model_name') or '?'}"
+        text = (
+            "确定性阶段本地执行；AGENT_LOOP 使用 "
+            f"{model} 进行动作排序（{grounding.get('model_calls', 0)} 次，"
+            f"{grounding.get('model_tokens', 0)} tokens），模型不参与漏洞结论。"
+        )
+    elif grounding.get("agent_enabled"):
+        text = "确定性阶段本地执行；AGENT_LOOP 已启用但未调用模型（规则选择）。"
+    else:
+        text = "确定性阶段本地执行；未调用模型。"
+    if active_external:
+        text += "外部分析器有产出，实际状态见第 18 节。"
+    else:
+        text += "外部分析器未运行或全部降级，原因见第 18 节。"
+    return text
+
+
+def _rootfs_summary(rootfs: dict[str, Any], grounding: dict[str, Any]) -> str:
+    """Describe unpack provenance without leaking an absolute host path."""
+    input_type = rootfs.get("input_type", "unknown")
+    if input_type == "rootfs":
+        return "输入为已解包 rootfs；未执行固件解包。"
+    parts = [
+        f"输入类型：{input_type}",
+        f"解包方式：{grounding.get('unpack_method') or 'unknown'}",
+        f"rootfs 评分：{grounding.get('rootfs_score', '?')}",
+        f"置信度：{grounding.get('extraction_confidence', '?')}",
+        f"状态：{rootfs.get('status', 'unknown')}",
+    ]
+    if grounding.get("rootfs_candidates") is not None:
+        parts.append(f"保留 rootfs 候选：{grounding.get('rootfs_candidates')}")
+    if grounding.get("rootfs_duplicates_suppressed"):
+        parts.append(
+            f"抑制重复候选：{grounding.get('rootfs_duplicates_suppressed')}"
+        )
+    if grounding.get("unpack_degraded"):
+        parts.append("解包降级：提取器非 0 退出但产出了可用文件树，设备节点可能缺失")
+    return "；".join(parts) + "。"
+
+
+def _limitations_summary(grounding: dict[str, Any]) -> str:
+    """List concrete capability gaps behind the evidence boundary."""
+    bullets = [
+        "静态 source/sink 共存不等于数据流可达；缺少调用链的候选必须通过反编译或隔离动态验证。",
+    ]
+    decompile_status = grounding.get("decompile_status")
+    if decompile_status and decompile_status != "unknown":
+        reason = grounding.get("decompile_reason") or "未记录原因"
+        fallback = grounding.get("decompile_fallback") or "unknown"
+        bullets.append(
+            f"DECOMPILE 状态：{decompile_status}；原因：{reason}；fallback={fallback}。"
+        )
+    unsupported = grounding.get("chain_unsupported_architectures") or []
+    if unsupported:
+        bullets.append(
+            "检测到架构 "
+            + ", ".join(str(item) for item in unsupported)
+            + "；当前调用链恢复仅支持 "
+            + ", ".join(str(item) for item in (grounding.get("chain_supported_arches") or []))
+            + f"，因此 {grounding.get('candidates_without_chain', 0)} 条候选没有调用链证据。"
+        )
+    else:
+        bullets.append(
+            f"调用链证据：{grounding.get('candidates_with_chain', 0)}/"
+            f"{grounding.get('candidate_total', 0)} 条候选有至少 2 层调用链。"
+        )
+    bullets.append(
+        "候选可追溯性："
+        f"{grounding.get('candidate_traceable', 0)}/"
+        f"{grounding.get('candidate_total', 0)} 条候选的 binary_id 指向解包文件系统内的真实文件。"
+    )
+    if grounding.get("candidate_missing_binary"):
+        missing = grounding.get("candidate_missing_ids") or []
+        bullets.append(
+            f"缺少可追溯二进制的候选：{grounding.get('candidate_missing_binary')} 条"
+            + (f"（示例：{', '.join(str(item) for item in missing[:5])}）" if missing else "")
+            + "。"
+        )
+    bullets.append(
+        f"证据文件：候选引用 {grounding.get('evidence_referenced', 0)} 个 evidence_id，"
+        f"其中 {grounding.get('evidence_resolved', 0)} 个在 evidence/ 下存在。"
+    )
+    external_tools = grounding.get("external_tools") or []
+    if external_tools:
+        parts = []
+        for item in external_tools:
+            status = item.get("status") or "unknown"
+            limitation = item.get("limitation")
+            parts.append(
+                f"{item.get('name')}={status}"
+                + (f"（{limitation}）" if limitation else "")
+            )
+        bullets.append("外部分析器：" + "；".join(parts) + "。")
+    if grounding.get("binary_truncated"):
+        bullets.append("二进制分诊达到 max_binaries 上限，部分 ELF 未进入候选生成。")
+    if grounding.get("model_used"):
+        bullets.append("模型仅参与动作选择，不参与漏洞结论、工具参数或路径生成。")
+    bullets.append(
+        "accepted=0 或“已降级/已排除”只表示现有证据未闭合，不代表设备不存在漏洞。"
+    )
+    return "\n".join(f"- {item}" for item in bullets)
 
 
 def _false_positive_summary(
@@ -209,6 +521,7 @@ def _section_body(
     external: dict[str, Any],
     recurrence: dict[str, Any],
     agent_trace: dict[str, Any],
+    grounding: dict[str, Any],
 ) -> str:
     inventory = binaries.get("inventory", {}) if isinstance(binaries, dict) else {}
     rows = binaries.get("summaries", []) if isinstance(binaries, dict) else []
@@ -230,8 +543,8 @@ def _section_body(
         "执行摘要": f"完成 {_count(surfaces, 'surfaces')} 个攻击面、{len(rows)} 个 ELF 与 {len(ranked)} 个候选的可追溯分析。",
         "任务与授权范围": f"授权主体：{task['authorization']['holder']}；范围：{task['authorization']['scope']}；仅分析提交的输入。",
         "输入与固件指纹": f"输入类型：{rootfs.get('input_type', 'unknown')}；固件 SHA-256：{rootfs.get('firmware_sha256', '目录输入，不适用')}。",
-        "分析环境": "CLI 离线执行；外部分析器和网络能力由配置及安全策略控制。",
-        "解包与根文件系统": f"状态：{rootfs.get('status', 'unknown')}；置信度：{rootfs.get('extraction_confidence', 0)}。",
+        "分析环境": _environment_summary(grounding),
+        "解包与根文件系统": _rootfs_summary(rootfs, grounding),
         "文件系统清单": f"ELF：{inventory.get('elf_count', 0)}；脚本：{inventory.get('script_count', 0)}；配置：{inventory.get('config_count', 0)}。",
         "体系结构与加固概览": f"检测到的体系结构：{', '.join(sorted({str(r.get('architecture')) for r in rows})) or '无'}。",
         "启动服务": f"启动服务记录：{binaries.get('startup', {}).get('service_count', 0) if isinstance(binaries, dict) else 0}。",
@@ -240,12 +553,8 @@ def _section_body(
         "重点二进制": f"已按启动、网络、Web 和危险 API 信号完成 {len(rows)} 个二进制分诊。",
         "静态分析方法": "候选仅由真实 source/sink 信号生成；没有调用链时明确保留为待验证事实。",
         "漏洞候选总览": f"候选数：{len(ranked)}。",
-        "风险排序": "; ".join(
-            f"{c.get('candidate_id')}={c.get('risk_score')}/{c.get('risk_level')}"
-            for c in ranked[:10]
-        )
-        or "无候选。",
-        "反证验证结果": f"已复核：{len(verdicts)}；接受：{sum(1 for v in verdicts if v.get('action') == 'ACCEPT')}。",
+        "风险排序": _evidence_table(ranked, verdicts, rows),
+        "反证验证结果": _verdict_table(verdicts, len(ranked), grounding),
         "误报控制摘要": (
             f"候选总数：{fp_summary['candidate_total']}；已复核：{fp_summary['reviewed_total']}；"
             f"确认采纳：{fp_summary['accepted_total']}；降级：{fp_summary['downgraded_total']}；"
@@ -261,8 +570,12 @@ def _section_body(
             f"命中签名：{', '.join(cves[:5]) or '无'}。"
             "本节依赖已知漏洞签名，不属于零先验能力，不计入 Blind Benchmark 指标。"
         ),
-        "证据链与可追溯性": "每个候选引用独立 evidence_id，决策和阶段状态保存在运行目录。",
-        "限制与待验证事实": "静态 source/sink 共存不等于数据流可达；缺少调用链的候选必须通过反编译或隔离动态验证。",
+        "证据链与可追溯性": (
+            f"候选引用 {grounding.get('evidence_referenced', 0)} 个 evidence_id，"
+            f"其中 {grounding.get('evidence_resolved', 0)} 个在 evidence/ 下存在；"
+            "决策和阶段状态保存在运行目录。"
+        ),
+        "限制与待验证事实": _limitations_summary(grounding),
         "修复建议": "优先消除 Shell 调用，采用参数化 API；对网络输入执行白名单、长度和类型校验，并收紧预认证入口。",
         "最终结论": f"基于现有证据形成 {len(verdicts)} 条反证审查结论；未达到证据门槛的条目不声明为已确认漏洞。",
         "自主分析轨迹": _agent_summary(
@@ -283,11 +596,27 @@ def execute_report(run_dir: str) -> dict[str, Any]:
     ranking = load_artifact(run, "ranking.json", {})
     verdict = load_artifact(run, "verdict.json", {"run_id": run.name, "verdicts": []})
     validation = load_artifact(run, "local_validation.json", {})
-    external = load_artifact(run, "external_findings/all.json", {})
+    external = _load_external_bundle(run)
     recurrence = load_artifact(run, "external_findings/recurrence_findings.json", {})
     agent_trace = load_artifact(run, "agent_trace.json", {})
     if not agent_trace and task.get("blind", False):
         agent_trace = {"enabled": False, "disabled_reason": "blind"}
+    decompile = load_artifact(run, "decompile.json", {})
+    try:
+        run_state = load_json(run / "state" / "run_state.json")
+    except Exception:  # noqa: BLE001 - old/partial runs may not have state
+        run_state = {}
+    grounding = build_grounding(
+        run,
+        rootfs=rootfs,
+        binaries=binaries,
+        ranking=ranking,
+        verdict=verdict,
+        run_state=run_state,
+        decompile=decompile,
+        external=external,
+        agent_trace=agent_trace,
+    )
     validate(verdict, schema_name="verdict")
 
     lines = [f"# 固件安全智能体分析报告 — {run.name}", ""]
@@ -308,6 +637,7 @@ def execute_report(run_dir: str) -> dict[str, Any]:
                     external,
                     recurrence,
                     agent_trace,
+                    grounding,
                 ),
                 "",
             ]

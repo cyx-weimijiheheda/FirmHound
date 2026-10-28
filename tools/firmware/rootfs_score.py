@@ -56,6 +56,20 @@ def _first_existing(paths: list[Path]) -> Path | None:
     return None
 
 
+def _is_within(path: Path, parent: Path) -> bool:
+    """Return True when ``path`` lives below ``parent``."""
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _related_paths(first: Path, second: Path) -> bool:
+    """Return True when one path is the other or lives below it."""
+    return _is_within(first, second) or _is_within(second, first)
+
+
 def _score_directory(path: Path) -> dict[str, Any]:
     """Return score details for a single candidate directory."""
     score = 0
@@ -154,7 +168,59 @@ def score_rootfs_candidates(extracted_dir: str | Path) -> dict[str, Any]:
             seen.add(c["path"])
             unique.append(c)
 
-    unique.sort(key=lambda x: x["score"], reverse=True)
+    # A staging directory and a carved child can both look like a rootfs. Keep
+    # only one representative of an ancestor/descendant pair: higher score
+    # first, then the more specific (deeper) path.
+    unique.sort(
+        key=lambda item: (
+            -int(item["score"]),
+            -len(Path(item["path"]).parts),
+            item["path"],
+        )
+    )
+    kept: list[dict[str, Any]] = []
+    suppressed: list[dict[str, Any]] = []
+    for candidate in unique:
+        path = Path(candidate["path"])
+        related = next(
+            (item for item in kept if _related_paths(path, Path(item["path"]))),
+            None,
+        )
+        if related is not None:
+            suppressed.append(
+                {
+                    "path": candidate["path"],
+                    "score": candidate["score"],
+                    "reason": f"related to selected rootfs {related['path']}",
+                }
+            )
+            continue
+        kept.append(candidate)
+    unique = kept
+    # A staging root is suppressed in favour of its carved child, but unrelated
+    # subdirectories such as out/usr can still look like weak candidates. Drop
+    # low-score candidates that live inside a suppressed staging root; real
+    # rootfs candidates score >= 5 and are preserved.
+    if suppressed:
+        suppressed_paths = [Path(item["path"]) for item in suppressed]
+        retained: list[dict[str, Any]] = []
+        for candidate in unique:
+            path = Path(candidate["path"])
+            inside_staging = any(
+                path != staging and _is_within(path, staging)
+                for staging in suppressed_paths
+            )
+            if inside_staging and int(candidate["score"]) < 5:
+                suppressed.append(
+                    {
+                        "path": candidate["path"],
+                        "score": candidate["score"],
+                        "reason": "low-score directory inside a suppressed staging root",
+                    }
+                )
+                continue
+            retained.append(candidate)
+        unique = retained
     best = unique[0] if unique else None
     confidence = 0.0
     if best:
@@ -167,6 +233,7 @@ def score_rootfs_candidates(extracted_dir: str | Path) -> dict[str, Any]:
 
     return {
         "candidates": unique,
+        "suppressed_candidates": suppressed,
         "best": best,
         "extraction_confidence": confidence,
         "threshold_met": best is not None and best["score"] >= 5,

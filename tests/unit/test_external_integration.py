@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from fsa.runtime.tool_registry import ToolRegistry
-from fsa.utils.jsonio import save_json
+from fsa.utils.jsonio import load_json, save_json
 from tools.external.adapter import _resolve_rootfs, _tool_cfg
 from tools.external.run_all import run_all
 
@@ -92,6 +92,22 @@ def test_eight_switch_combos_degrade_without_abort(combo):
     # Every per-tool entry is itself a dict (no exception leaked out).
     for tool, sub in result.get("per_tool", {}).items():
         assert isinstance(sub, dict), f"{tool} returned a non-dict: {sub!r}"
+
+
+def test_run_all_disabled_writes_all_json_with_per_tool_reasons(tmp_path):
+    """A disabled external track must still leave an explainable all.json."""
+    cfg_path = _write_config(set())
+    result = run_all(tmp_path, config_path=cfg_path)
+
+    assert result["status"] == "skipped"
+    all_path = tmp_path / "artifacts" / "external_findings" / "all.json"
+    assert all_path.is_file()
+    document = load_json(all_path)
+    assert set(document["per_tool"]) == {"satc", "firmrec", "klee", "bond"}
+    for info in document["per_tool"].values():
+        assert info["status"] == "skipped"
+        assert "enabled=false" in info["limitation"]
+    assert "see per_tool" in document["limitation"]
 
 
 def test_run_external_via_registry_does_not_abort():

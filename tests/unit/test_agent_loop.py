@@ -140,6 +140,34 @@ def test_static_actions_run_and_trace_validates(tmp_path: Path) -> None:
     assert "cross_check_imports_strings" in trace["summary"]["actions"]
     assert trace["candidates"][0]["actions_attempted"]
     assert (run / "artifacts" / "ranking.json").is_file()
+    assert (run / "artifacts" / "agent_execution.html").is_file()
+
+
+def test_visualization_is_throttled_but_final_html_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = _run(tmp_path)
+    calls: list[Path] = []
+
+    def fake_visualization(run_dir: Path, trace: dict[str, Any]) -> Path:
+        target = Path(run_dir) / "artifacts" / "agent_execution.html"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("visualization", encoding="utf-8")
+        calls.append(target)
+        return target
+
+    monkeypatch.setattr(agent_loop, "write_agent_visualization", fake_visualization)
+    result = agent_loop.run_agent_loop(
+        run, options=_options(), config={"runtime": {"default": "mock"}}
+    )
+
+    trace = load_json(run / "artifacts" / "agent_trace.json")
+    assert result["steps"] == len(trace["steps"])
+    assert calls
+    # First step + terminal write; the per-step loop never renders every step.
+    assert len(calls) <= 2 + trace["summary"]["steps"] // 10
+    assert len(calls) < trace["summary"]["steps"] + 2
+    assert (run / "artifacts" / "agent_execution.html").is_file()
 
 
 def test_progress_detail_includes_tokens_candidates_and_evidence(tmp_path: Path) -> None:

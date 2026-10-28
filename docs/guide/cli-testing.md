@@ -29,9 +29,10 @@ fsa plan \
 通过标准：
 
 - 输出 `status=ok`
-- 能抽出或保留 `vendor / model / depth`
+- 能抽出或保留 `vendor / model / version / depth`（JSON 现在直接暴露前三个字段）
 - `depth=full` 时 `stages` 包含 `EXTERNAL_ANALYSIS / FUSION / SYMEX_PRUNE / CONSTRAINED_VALIDATION`
 - 缺授权或缺固件时输出 `requires_human_gate=true` 并列出原因，**不会**伪造继续执行
+- `--firmware-path` 指向不存在的文件是硬错误（退出码 1）；只有“缺少槽位”才进入 human gate
 
 ## 3. 冒烟（走正式 CLI 入口）
 
@@ -72,10 +73,15 @@ fsa analyze <FIRMWARE_BIN_OR_CHK> \
 通过标准：
 
 - 主链 `status=done`
-- `artifacts/rootfs.json` 记录输入类型与 rootfs 来源
+- `artifacts/rootfs.json` 记录输入类型、rootfs 来源、解包方式/评分/置信度，以及
+  `rootfs_candidates` / `rootfs_duplicates_suppressed` / `unpack_degraded`
 - `artifacts/` 下依次出现 `firmware_baseline.json`、`binary_summaries.json`、`candidates.json`、
   `ranking.json`、`verdict.json`
-- 报告「外部分析器结果」一节写清缺哪些工具、哪些结论因此受限，**不写假命中**
+- 报告「外部分析器结果」一节写清缺哪些工具、哪些结论因此受限，**不写假命中**；
+  KLEE/BOND 在后续阶段写出的 `klee.json` / `bond.json` 也会合并计入，不显示为 0
+- 报告第 14 节列出 Top 候选的二进制/入口、Source→Sink、调用链/认证/证据/裁决；
+  第 15 节列出 reviewed/unreviewed 覆盖与排除理由；第 21 节写明反编译 fallback、
+  架构与调用链能力、候选可追溯性，以及 accepted=0 不等于无漏洞
 
 实时进度的可验证行为：
 

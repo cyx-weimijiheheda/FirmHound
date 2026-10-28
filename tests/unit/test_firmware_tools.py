@@ -189,6 +189,102 @@ def test_unpack_extracts_carved_squashfs_slice(
     assert score_rootfs_candidates(out)["threshold_met"] is True
 
 
+def test_unpack_accepts_populated_nonzero_squashfs_without_carving(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A non-zero exit with written files is usable and must not be carved twice."""
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"hsqs" + b"B" * 64)
+    out = tmp_path / "out"
+
+    def fake_which(name: str) -> str | None:
+        return f"/bin/{name}" if name in {"binwalk", "unsquashfs"} else None
+
+    def fake_run_command(cmd: list[str], timeout: int = 300) -> RunResult:
+        extract_dir = Path(cmd[cmd.index("-d") + 1])
+        _make_rootfs(extract_dir)
+        return RunResult(
+            command=" ".join(cmd),
+            returncode=1,
+            stdout="",
+            stderr="chown: cannot create device node",
+            status="failed",
+        )
+
+    monkeypatch.setattr("tools.firmware.collect_info.shutil.which", fake_which)
+    monkeypatch.setattr("tools.firmware.unpack.shutil.which", fake_which)
+    monkeypatch.setattr(
+        "tools.firmware.collect_info._binwalk_signatures",
+        lambda _path: [{"offset": 0, "description": "Squashfs filesystem, big endian"}],
+    )
+    monkeypatch.setattr("tools.firmware.unpack.run_command", fake_run_command)
+
+    result = unpack(fw, out)
+
+    assert result["status"] == "success"
+    assert result["extraction_degraded"] is True
+    assert "fallback" not in result
+    assert not list(out.glob("carved_squashfs_0_*"))
+    assert score_rootfs_candidates(out)["threshold_met"] is True
+
+
+def test_unpack_timeout_with_partial_files_is_not_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A timed-out extractor may have a truncated tree; do not accept it."""
+    fw = tmp_path / "fw.bin"
+    fw.write_bytes(b"hsqs" + b"B" * 64)
+    out = tmp_path / "out"
+
+    def fake_which(name: str) -> str | None:
+        return f"/bin/{name}" if name in {"binwalk", "unsquashfs"} else None
+
+    def fake_run_command(cmd: list[str], timeout: int = 300) -> RunResult:
+        extract_dir = Path(cmd[cmd.index("-d") + 1])
+        _make_rootfs(extract_dir)
+        return RunResult(
+            command=" ".join(cmd),
+            returncode=-9,
+            stdout="",
+            stderr="timed out",
+            status="timeout",
+        )
+
+    monkeypatch.setattr("tools.firmware.collect_info.shutil.which", fake_which)
+    monkeypatch.setattr("tools.firmware.unpack.shutil.which", fake_which)
+    monkeypatch.setattr(
+        "tools.firmware.collect_info._binwalk_signatures",
+        lambda _path: [{"offset": 0, "description": "Squashfs filesystem, big endian"}],
+    )
+    monkeypatch.setattr("tools.firmware.unpack.run_command", fake_run_command)
+
+    result = unpack(fw, out)
+
+    assert result["status"] != "success"
+    assert not list(out.glob("carved_squashfs_0_*"))
+
+
+def test_rootfs_score_suppresses_related_ancestor(tmp_path: Path) -> None:
+    """A staging root and its carved child must not both survive."""
+    container = tmp_path / "extracted"
+    (container / "bin").mkdir(parents=True)
+    (container / "sbin").mkdir(parents=True)
+    (container / "etc").mkdir(parents=True)
+    (container / "lib").mkdir(parents=True)
+    (container / "usr" / "bin").mkdir(parents=True)
+    (container / "usr" / "bin" / "tool").write_text("tool", encoding="utf-8")
+    child = container / "squashfs-root"
+    _make_rootfs(child)
+
+    result = score_rootfs_candidates(container)
+
+    assert result["best"]["path"] == str(child.resolve())
+    assert [Path(item["path"]) for item in result["candidates"]] == [child.resolve()]
+    suppressed = {Path(item["path"]) for item in result["suppressed_candidates"]}
+    assert container.resolve() in suppressed
+    assert (container / "usr").resolve() in suppressed
+
+
 def test_unpack_rejects_successful_empty_squashfs_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

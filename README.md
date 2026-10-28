@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%20--%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux-2F6FAD)](#环境配置linux)
-[![Tests](https://img.shields.io/badge/tests-462%20passed%20%7C%201%20skipped-1D9E75)]()
+[![Tests](https://img.shields.io/badge/tests-473%20passed%20%7C%201%20skipped-1D9E75)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![CVE Benchmark](https://img.shields.io/badge/benchmark-9%20CVEs-534AB7)](benchmarks/CVEs)
 [![Skills](https://img.shields.io/badge/skills-9%20packs-0F6E56)](skills)
@@ -69,7 +69,7 @@
 | 🔒 动态验证安全门 | 四项硬门（AUTHORIZED / LOCAL_LAB / PRIVATE_NETWORK / BASELINE_READY），仅无害探针 |
 | 🧭 受控自主执行 | `--agent` 开启有界取证循环；模型只排序合法动作，不决定漏洞结论 |
 | 📜 证据链可审计 | EvidenceStore / DecisionStore 全量落盘，报告 24 节骨架，静态结论保留反证与限制 |
-| ✅ 金标准回归 | `benchmarks/CVEs/` 9 个历史 CVE fixture，462 项单元测试持续守护 |
+| ✅ 金标准回归 | `benchmarks/CVEs/` 9 个历史 CVE fixture，473 项单元测试持续守护 |
 
 ## 快速开始（60 秒）
 
@@ -443,6 +443,23 @@ RANK/Verifier → mini-BOND 约束验证。FirmRec 是已知漏洞复发扫描�
 需要显式参数。Agent 按风险分数轮转候选，生成 `artifacts/agent_trace.json` 与
 可离线打开的 `artifacts/agent_execution.html` 执行路径图，报告第 24 节提供入口。详见
 [`docs/guide/agent-loop.md`](docs/guide/agent-loop.md)。
+
+## 报告的证据边界
+
+`report.md` 仍是 24 节，但第 4/5/14/15/18/21 节会明确区分证据来源，避免把
+“未证实”写成“无漏洞”：
+
+- 第 4 节如实写明 Agent 模型是否参与动作排序、使用哪个 runtime/model、调用次数；
+  没有模型时写“未调用模型”，不再无条件写“离线执行”；
+- 第 5 节写解包方式、rootfs 评分/置信度、重复候选抑制数，以及解包是否 degraded；
+- 第 14 节给出 Top 10 候选的证据链表：二进制/入口、Source→Sink、调用链、认证、
+  证据/反证与裁决；
+- 第 15 节给出 reviewed/unreviewed 覆盖、裁决表和排除理由，明确“排除/降级”不等于
+  漏洞不存在；
+- 第 18 节合并 `all.json` 与 KLEE/BOND 的单独产物，列出每个外部工具的禁用/缺失原因，
+  FirmRec 复发结果仍只在第 19 节、不计入规范化外部发现；
+- 第 21 节列出反编译 fallback、检测架构与调用链支持范围、候选可追溯性、外部器与
+  模型边界，并写明 `accepted=0` 只表示现有证据未闭合。
 
 ## 评分与结论模型
 

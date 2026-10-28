@@ -8,7 +8,7 @@ FirmHound（固件猎犬）——IoT 固件漏洞挖掘自动化流水线：`解
 ```bash
 make dev                         # 建 .venv + 装依赖 + editable 安装
 make doctor                      # 环境自检
-make test                        # 单元测试（462 passed / 1 skipped 为当前基线）
+make test                        # 单元测试（473 passed / 1 skipped 为当前基线）
 make lint                        # ruff（版本按 requirements.txt）
 
 fsa analyze tmp/unpacked/x/squashfs-root --input-type rootfs \
@@ -39,7 +39,7 @@ fsa analyze tmp/unpacked/x/squashfs-root --input-type rootfs \
 | ELF 画像、危险函数分级 | `tools/binary/*` |
 | source/sink 规则、十维评分、误报过滤 | `tools/analysis/*` |
 | 候选生成（阶段入口） | `tools/audit/static.py` |
-| 报告 24 节骨架、证据账本、中断快照 | `tools/report/*`（`generate.py` / `partial.py`） |
+| 报告 24 节骨架、证据账本、证据边界、中断快照 | `tools/report/*`（`generate.py` / `grounding.py` / `partial.py`） |
 | 外部分析器（SaTC/FirmRec/KLEE/BOND） | `tools/external/*` |
 | 跨阶段数据契约 | `schemas/*.schema.json` |
 

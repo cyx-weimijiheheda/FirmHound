@@ -7,6 +7,7 @@ from typing import Any
 
 from fsa.utils.jsonio import load_json
 from tools.external.bond.sanitize import sanitize_poc
+from tools.report.grounding import build_grounding
 
 _ARTIFACTS = {
     "rootfs": "rootfs.json",
@@ -148,6 +149,22 @@ def execute_partial_report(
     candidates = _candidates(run, artifacts)
     verdicts = _verdicts(artifacts)
     verdict_by_id = {str(item.get("candidate_id")): item for item in verdicts}
+    grounding = build_grounding(
+        run,
+        rootfs=artifacts.get("rootfs") or {},
+        binaries=artifacts.get("binaries") or {},
+        ranking=artifacts.get("ranking")
+        or artifacts.get("unified")
+        or artifacts.get("candidates")
+        or {},
+        verdict=artifacts.get("verdict") or {},
+        run_state=state,
+        decompile=_optional_json(run / "artifacts" / "decompile.json"),
+        external=_optional_json(
+            run / "artifacts" / "external_findings" / "all.json"
+        ),
+        agent_trace=artifacts.get("agent_trace") or {},
+    )
     top = candidates if limit <= 0 else candidates[:limit]
     evidence_count = len(list((run / "evidence").glob("*.json")))
     decision_count = len(list((run / "decisions").glob("*.json")))
@@ -297,6 +314,39 @@ def execute_partial_report(
     if not (run / "artifacts" / "external_findings" / "all.json").is_file():
         missing.append("外部分析器结果缺失：EXTERNAL_ANALYSIS/FUSION 未完成或未启用。")
     lines.extend(f"- {item}" for item in (missing or ["未发现关键产物缺失。"]))
+    gaps: list[str] = []
+    if grounding.get("decompile_status") not in (None, "unknown"):
+        reason = grounding.get("decompile_reason") or "未记录原因"
+        gaps.append(f"DECOMPILE 状态：{grounding.get('decompile_status')}；原因：{reason}。")
+    unsupported = grounding.get("chain_unsupported_architectures") or []
+    if unsupported:
+        gaps.append(
+            "检测到架构 "
+            + ", ".join(str(item) for item in unsupported)
+            + "；当前调用链恢复仅支持 "
+            + ", ".join(str(item) for item in (grounding.get("chain_supported_arches") or []))
+            + "。"
+        )
+    if grounding.get("candidate_total"):
+        gaps.append(
+            "候选可追溯性："
+            f"{grounding.get('candidate_traceable', 0)}/"
+            f"{grounding.get('candidate_total', 0)} 条候选指向解包文件系统内的真实文件。"
+        )
+    if grounding.get("external_tools"):
+        gaps.append(
+            "外部分析器："
+            + "；".join(
+                f"{item.get('name')}={item.get('status')}"
+                + (f"（{item.get('limitation')}）" if item.get("limitation") else "")
+                for item in grounding["external_tools"]
+            )
+            + "。"
+        )
+    if grounding.get("model_used"):
+        gaps.append("模型仅参与动作选择，不参与漏洞结论。")
+    if gaps:
+        lines.extend(["", "已有产物能说明的能力边界：", *[f"- {item}" for item in gaps]])
     recovery = (
         "运行已完成，无需恢复。"
         if final

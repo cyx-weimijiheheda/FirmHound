@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.audit.audit_constants import CHAIN_SINKS
+from tools.binary.call_chain import SUPPORTED_ARCHES
 
 Precondition = Callable[[dict[str, Any], dict[str, Any]], bool]
 
@@ -49,7 +50,7 @@ def _can_recover_chain(candidate: dict[str, Any], context: dict[str, Any]) -> bo
     sink = str((candidate.get("sink") or {}).get("function", ""))
     binary = str(summary.get("path", ""))
     arch = str(context.get("arch", "")).lower()
-    if arch not in {"arm", "arm32"}:
+    if arch not in SUPPORTED_ARCHES:
         return False
     if rootfs is None or not binary or sink not in CHAIN_SINKS:
         return False

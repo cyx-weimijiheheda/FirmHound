@@ -9,8 +9,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "fixtures"))
 
 from elf_builder import build_elf64, write_elf64  # noqa: E402
 
+from fsa.utils.jsonio import load_json, save_json
 from tools.binary.danger_scan import scan_dangerous_functions, scan_imports
 from tools.binary.elf_triage import triage_elf
+from tools.binary.pipeline import execute_decompile
 from tools.binary.secfeatures import security_features
 
 
@@ -154,3 +156,19 @@ def test_build_elf64_round_trip() -> None:
     data = build_elf64(imports=["system"], defined_syms=["main"], rodata_strings=["abc"])
     assert data[:4] == b"\x7fELF"
     assert len(data) > 64
+
+
+def test_execute_decompile_persists_its_limitation(tmp_path: Path) -> None:
+    run = tmp_path / "run"
+    save_json(
+        run / "artifacts" / "binary_summaries.json",
+        {"inventory": {}, "summaries": [{"binary_id": "bin-1"}]},
+    )
+
+    result = execute_decompile(str(run))
+
+    assert result["decompile_status"] == "degraded"
+    record = load_json(run / "artifacts" / "decompile.json")
+    assert record["fallback"] == "pyelftools"
+    assert "no decompiler" in record["reason"]
+    assert record["binary_count"] == 1

@@ -120,22 +120,45 @@ def _extract_with_strategy(
         _prepare_output_dir(binary, out)
         result = run_command(cmd, timeout=300)
         status = result.status
-        if (
-            status == "success"
-            and binary in {"unsquashfs", "sasquatch"}
-            and not _dir_has_entries(out)
-        ):
-            status = "failed"
-        attempts.append(
-            {
-                "command": result.command,
-                "status": status,
-                "returncode": result.returncode,
-                "stderr_tail": result.stderr[-500:],
-            }
-        )
+        populated = binary in {"unsquashfs", "sasquatch"} and _dir_has_entries(out)
+        degraded = False
+        degraded_reason: str | None = None
+        if binary in {"unsquashfs", "sasquatch"}:
+            if status == "success" and not populated:
+                status = "failed"
+                degraded_reason = "extractor reported success but produced no files"
+            elif status == "failed" and populated:
+                # unsquashfs/sasquatch commonly exit non-zero after extracting
+                # everything when running unprivileged and unable to recreate
+                # device nodes or special files. The tree is still usable.
+                status = "success"
+                degraded = True
+                degraded_reason = (
+                    "extractor exited non-zero but produced files; "
+                    "device-node/symlink creation errors are non-fatal"
+                )
+            # A timeout may mean a truncated tree; keep it failed so the carve
+            # path can try again instead of silently accepting partial data.
+        attempt: dict[str, Any] = {
+            "command": result.command,
+            "status": status,
+            "returncode": result.returncode,
+            "stderr_tail": result.stderr[-500:],
+        }
+        if degraded:
+            attempt["degraded"] = True
+            attempt["degraded_reason"] = degraded_reason
+        attempts.append(attempt)
         if status == "success":
-            return {"status": "success", "method": strategy["name"], "attempts": attempts}
+            payload: dict[str, Any] = {
+                "status": "success",
+                "method": strategy["name"],
+                "attempts": attempts,
+            }
+            if any(item.get("degraded") for item in attempts):
+                payload["degraded"] = True
+                payload["degraded_reason"] = degraded_reason
+            return payload
     return {"status": "failed", "method": strategy["name"], "attempts": attempts}
 
 
@@ -284,6 +307,7 @@ def _carve_fallback(
     out: Path,
     *,
     skip_kinds: set[str] | None = None,
+    skip_zero_kinds: set[str] | None = None,
 ) -> dict[str, Any]:
     """Fallback: scan for embedded filesystems, carve slices, then extract them.
 
@@ -291,15 +315,20 @@ def _carve_fallback(
     headers. Binwalk can identify those offsets, but when full-image extraction
     fails we still need to recover the filesystem by carving from the inner magic
     and retrying the proper extractor on that slice.
+
+    ``skip_zero_kinds`` avoids carving offset 0 for a kind whose whole-file
+    extraction was already attempted; the slice would be byte-identical and
+    would create a second rootfs candidate. Stop after the first successful
+    extraction because one usable rootfs is enough for the pipeline.
     """
     out.mkdir(parents=True, exist_ok=True)
     attempts: list[dict[str, Any]] = []
+    skip_zero_kinds = set(skip_zero_kinds or ())
 
     with fw.open("rb") as fh:
         data = fh.read()
 
     carved_any = False
-    extracted_any = False
     for target in CARVE_TARGETS:
         magic = target["magic"]
         kind = target["kind"]
@@ -307,6 +336,16 @@ def _carve_fallback(
             continue
         offsets = _iter_magic_offsets(data, magic, max_hits=target["max_hits"])
         for offset in offsets:
+            if offset == 0 and kind in skip_zero_kinds:
+                attempts.append(
+                    {
+                        "offset": offset,
+                        "kind": kind,
+                        "status": "skipped",
+                        "reason": "whole-file extraction with this kind was already attempted",
+                    }
+                )
+                continue
             slice_path = out / f"carved_{kind}_{offset}.bin"
             with slice_path.open("wb") as wh:
                 wh.write(data[offset:])
@@ -328,11 +367,17 @@ def _carve_fallback(
                 attempt["extraction"] = extraction
                 if extraction["status"] == "success":
                     attempt["status"] = "extracted"
-                    extracted_any = True
+                    attempts.append(attempt)
+                    return {
+                        "status": "success",
+                        "method": "carve_fallback",
+                        "attempts": attempts,
+                        "stopped_after_first": True,
+                    }
             attempts.append(attempt)
 
     return {
-        "status": "success" if extracted_any else "partial" if carved_any else "failed",
+        "status": "partial" if carved_any else "failed",
         "method": "carve_fallback",
         "attempts": attempts,
     }
@@ -383,15 +428,22 @@ def unpack(
         result["encrypted"] = encrypted
 
     if result["status"] != "success":
+        skip_zero_kinds: set[str] = set()
+        if strategy and result.get("attempts"):
+            full_kind = str(strategy.get("name", ""))
+            if full_kind in {item["kind"] for item in CARVE_TARGETS}:
+                skip_zero_kinds.add(full_kind)
         carve = _carve_fallback(
             fw,
             out,
             skip_kinds={"gzip"} if encrypted is not None else None,
+            skip_zero_kinds=skip_zero_kinds,
         )
         result["fallback"] = carve
         if carve["status"] in {"success", "partial"}:
             result["status"] = carve["status"]
 
+    result["extraction_degraded"] = bool(result.get("degraded", False))
     result["output_dir"] = str(out)
     result["binwalk_signatures"] = signatures
     return result

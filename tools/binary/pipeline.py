@@ -110,9 +110,15 @@ def execute_decompile(run_dir: str) -> dict[str, Any]:
     payload = load_artifact(run_dir, "binary_summaries.json")
     if not isinstance(payload, dict):
         return {"status": "failed", "reason": "binary triage artifact is missing"}
-    return {
+    record = {
         "status": "degraded",
         "reason": "no decompiler backend configured; symbol/string fallback retained",
         "fallback": "pyelftools",
         "binary_count": len(payload.get("summaries", [])),
+    }
+    save_artifact(run_dir, "decompile.json", record)
+    return {
+        **record,
+        "decompile_status": record["status"],
+        "decompile_reason": record["reason"],
     }

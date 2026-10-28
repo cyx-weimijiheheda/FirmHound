@@ -302,6 +302,9 @@ def plan(
             "run_id": task_card["task_id"],
             "objective": task_card["objective"],
             "firmware_path": task_card["firmware_path"],
+            "vendor": task_card.get("vendor"),
+            "model": task_card.get("model"),
+            "version": task_card.get("version"),
             "depth": task_card["depth"],
             "blind": bool(task_card.get("blind", False)),
             "agent": {

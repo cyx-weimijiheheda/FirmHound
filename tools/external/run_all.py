@@ -31,12 +31,13 @@ def run_all(
     config_path: str | None = None,
     phase: str = "all",
 ) -> dict[str, Any]:
-    """Run all *enabled* external analyzers and merge their outputs.
+    """Run every selected external analyzer and merge their outputs.
 
+    Disabled tools are also queried so their precise skip reason is recorded.
     Returns a dict with ``status`` (ok | skipped), ``per_tool`` results, and the
     combined finding count. Persists:
       * ``<run_dir>/artifacts/external_findings/<tool>.json`` (per tool, done by adapter)
-      * ``<run_dir>/artifacts/external_findings/all.json`` (combined)
+      * ``<run_dir>/artifacts/external_findings/all.json`` (combined, always)
     """
     run_dir = Path(run_dir)
     global_ext = _load_global_external(config_path)
@@ -55,19 +56,13 @@ def run_all(
         if global_ext.get("enabled", False) and (global_ext.get(t, {}) or {}).get("enabled", False)
     ]
 
-    if not enabled:
-        return {
-            "status": "skipped",
-            "tools": [],
-            "findings": 0,
-            "per_tool": {},
-            "phase": phase,
-            "limitation": "all selected external analyzers disabled in config",
-        }
-
+    # Call the adapter for every selected tool, including disabled ones. The
+    # adapter returns a precise skipped reason (config disabled, blind forced,
+    # module missing, rootfs missing) that the report can show instead of a
+    # bare "not enabled".
     per_tool: dict[str, Any] = {}
-    with ThreadPoolExecutor(max_workers=min(len(enabled), 4)) as pool:
-        futures = {pool.submit(_run_tool, tool, run_dir, config_path): tool for tool in enabled}
+    with ThreadPoolExecutor(max_workers=min(len(selected), 4)) as pool:
+        futures = {pool.submit(_run_tool, tool, run_dir, config_path): tool for tool in selected}
         for future in futures:
             tool = futures[future]
             try:
@@ -81,13 +76,23 @@ def run_all(
                 }
 
     total_findings = sum(len(r.get("findings", [])) for r in per_tool.values())
-    combined = {
-        "status": "ok",
+    ran = [
+        tool
+        for tool, result in per_tool.items()
+        if result.get("status") in {"ok", "degraded", "partial"}
+    ]
+    combined: dict[str, Any] = {
+        "status": "ok" if ran else "skipped",
         "tools": enabled,
         "findings": total_findings,
         "per_tool": per_tool,
         "phase": phase,
     }
+    if not ran:
+        combined["limitation"] = (
+            "all selected external analyzers were disabled or unavailable; "
+            "see per_tool for the individual reason"
+        )
 
     out_dir = run_dir / "artifacts" / "external_findings"
     out_dir.mkdir(parents=True, exist_ok=True)

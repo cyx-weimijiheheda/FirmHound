@@ -478,6 +478,40 @@ def test_cli_plan_exposes_blind_flag() -> None:
         shutil.rmtree(workspace, ignore_errors=True)
 
 
+def test_cli_plan_exposes_vendor_model_version() -> None:
+    workspace = (Path("tmp") / f"cli-plan-meta-{uuid.uuid4().hex}").resolve()
+    workspace.mkdir(parents=True)
+    try:
+        config = _test_config(workspace)
+        rootfs = _rootfs(workspace)
+        result = CliRunner().invoke(
+            main,
+            [
+                "--config",
+                str(config),
+                "plan",
+                "--firmware-path",
+                str(rootfs),
+                "--authorization-holder",
+                "fixture-owner",
+                "--vendor",
+                "D-Link",
+                "--model",
+                "DIR-825",
+                "--version",
+                "v2.10",
+                "--json-output",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["vendor"] == "D-Link"
+        assert payload["model"] == "DIR-825"
+        assert payload["version"] == "v2.10"
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
 def test_cli_analyze_rejects_empty_authorization_holder() -> None:
     """An empty holder must not start a run; plan already gates on it."""
     workspace = (Path("tmp") / f"cli-empty-holder-{uuid.uuid4().hex}").resolve()

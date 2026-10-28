@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,13 @@ def execute_unpack(
 
     out = (Path(temp_root).resolve() / Path(run_dir).resolve().name / "unpacked").resolve()
     policy.check_path(out)
+    # A resumed UNPACK must not merge into the previous attempt's output; that
+    # is how a direct extraction and a carved copy can both survive and turn
+    # into duplicate binaries/candidates.
+    if out.is_symlink() or out.is_file():
+        out.unlink()
+    elif out.exists():
+        shutil.rmtree(out)
     baseline = collect_info(input_path)
     # Fill baseline slots the string hints could not detect from the values
     # declared on the task card (--vendor/--model/--version). A detected hint
@@ -73,7 +81,13 @@ def execute_unpack(
         "rootfs_score": best["score"],
         "extraction_confidence": scored.get("extraction_confidence", 0.0),
         "unpack_method": extraction.get("method"),
+        "rootfs_candidates": len(scored.get("candidates", [])),
+        "rootfs_duplicates_suppressed": len(scored.get("suppressed_candidates", [])),
+        "unpack_degraded": bool(
+            extraction.get("extraction_degraded", extraction.get("degraded", False))
+        ),
     }
     save_artifact(run_dir, "firmware_baseline.json", baseline)
+    save_artifact(run_dir, "firmware_unpack.json", extraction)
     path = save_artifact(run_dir, "rootfs.json", descriptor)
     return {**descriptor, "artifact": str(path)}
