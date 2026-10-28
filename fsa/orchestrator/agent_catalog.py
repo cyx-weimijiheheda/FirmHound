@@ -118,7 +118,7 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
     ActionSpec(
         action_id="check_handler_startup",
         tier="standard",
-        produces=("handler_startup_checked",),
+        produces=("handler_startup_checked", "handler_started"),
         weight=4,
         cost=0.7,
         description="Check whether the candidate handler starts from init scripts.",

@@ -14,6 +14,7 @@ from typing import Any
 from fsa.orchestrator.agent_catalog import eligible_actions, rank_actions
 from fsa.orchestrator.agent_model import choose_with_model
 from fsa.orchestrator.agent_options import effective_runtime
+from fsa.orchestrator.agent_visualization import write_agent_visualization
 from fsa.prompts.manager import PromptManager
 from fsa.reporting.decision_store import DecisionStore
 from fsa.reporting.evidence_store import EvidenceStore
@@ -28,6 +29,63 @@ from tools.audit.agent_actions import ACTION_HANDLERS, build_context
 from tools.pipeline_context import load_artifact, load_task, run_path
 
 _FORBIDDEN_FIELDS = ("conclusion_category", "status", "risk_level")
+_ACTION_STATUSES = {"ok", "degraded", "failed", "partial", "skipped", "unsafe"}
+
+
+def _normalize_action_outcome(outcome: Any, action: Any) -> dict[str, Any]:
+    """Enforce the action contract and facts declared by its catalog entry."""
+    if not isinstance(outcome, dict):
+        return {
+            "status": "failed",
+            "produced_facts": [],
+            "evidence_ids": [],
+            "limitations": ["action returned a non-dict result"],
+        }
+
+    raw_limitations = outcome.get("limitations", []) or []
+    if isinstance(raw_limitations, str):
+        raw_limitations = [raw_limitations]
+    if not isinstance(raw_limitations, list | tuple | set):
+        raw_limitations = ["action returned malformed limitations"]
+    limitations = [str(item) for item in raw_limitations]
+    status = str(outcome.get("status", "failed"))
+    if status not in _ACTION_STATUSES:
+        limitations.append(f"action returned unsupported status: {status}")
+        status = "failed"
+    if status == "partial":
+        status = "degraded"
+    elif status == "unsafe":
+        status = "failed"
+
+    raw_produced = outcome.get("produced_facts", []) or []
+    if isinstance(raw_produced, str):
+        raw_produced = [raw_produced]
+    if not isinstance(raw_produced, list | tuple | set):
+        raw_produced = []
+        limitations.append("action returned malformed produced_facts")
+        status = "failed"
+    produced = {str(item) for item in raw_produced}
+    allowed = {str(item) for item in getattr(action, "produces", ())}
+    unexpected = produced - allowed
+    if unexpected:
+        limitations.append(f"action claimed undeclared facts: {sorted(unexpected)}")
+        produced -= unexpected
+        status = "failed"
+
+    raw_evidence = outcome.get("evidence_ids", []) or []
+    if isinstance(raw_evidence, str):
+        raw_evidence = [raw_evidence]
+    if not isinstance(raw_evidence, list | tuple | set):
+        raw_evidence = []
+        limitations.append("action returned malformed evidence_ids")
+        status = "failed"
+    evidence_ids = [str(item) for item in raw_evidence]
+    return {
+        "status": status,
+        "produced_facts": sorted(produced),
+        "evidence_ids": evidence_ids,
+        "limitations": limitations,
+    }
 
 
 def _now() -> str:
@@ -157,6 +215,13 @@ def _write_trace(run: Path, trace: dict[str, Any]) -> Path:
     validate(trace, schema_name="agent_trace")
     path = run / "artifacts" / "agent_trace.json"
     save_json(path, trace)
+    try:
+        write_agent_visualization(run, trace)
+    except Exception as exc:  # noqa: BLE001 - visualization must not fail analysis
+        trace["limitations"].append(
+            f"agent execution visualization could not be written: {type(exc).__name__}: {exc}"
+        )
+        save_json(path, trace)
     return path
 
 
@@ -202,6 +267,7 @@ def _finalize_trace(
             any(entry["status"] in {"degraded", "failed", "skipped"} for entry in trace["steps"])
             or trace["summary"]["stalled_candidates"]
             or trace["summary"]["skipped_candidates"]
+            or any(state.status == "degraded" for state in states)
         ):
             status = "degraded"
         else:
@@ -328,6 +394,7 @@ def run_agent_loop(
     # Resume/idempotency: replay completed steps from a previous attempt so
     # evidence is not duplicated and the same action is not retried.
     replayed: list[dict[str, Any]] = []
+    candidate_steps: dict[str, int] = {}
     trace_path = run / "artifacts" / "agent_trace.json"
     if trace_path.is_file():
         try:
@@ -354,6 +421,7 @@ def run_agent_loop(
                 budget.stage_tokens_used = used_tokens
             for entry in replayed:
                 cid = str(entry.get("candidate_id", ""))
+                candidate_steps[cid] = candidate_steps.get(cid, 0) + 1
                 state = next(
                     (item for item in states if str(item.candidate.get("candidate_id", "")) == cid),
                     None,
@@ -400,7 +468,6 @@ def run_agent_loop(
         }
     )
     stop_reason = "no work"
-    candidate_steps: dict[str, int] = {}
     model_info = trace["model"]
 
     try:
@@ -411,17 +478,24 @@ def run_agent_loop(
             if tool_calls >= max_tool_calls:
                 stop_reason = "tool-call budget"
                 break
-            state = next(
-                (
-                    item
-                    for item in states
-                    if item.missing
-                    and not item.stalled
-                    and not item.skipped
-                    and candidate_steps.get(str(item.candidate.get("candidate_id", "")), 0)
-                    < max_steps_per_candidate
+            available = [
+                item
+                for item in states
+                if item.missing
+                and not item.stalled
+                and not item.skipped
+                and candidate_steps.get(str(item.candidate.get("candidate_id", "")), 0)
+                < max_steps_per_candidate
+            ]
+            # Round-robin keeps one candidate from consuming the whole budget;
+            # within each round, spend effort on the highest-risk candidate.
+            state = min(
+                available,
+                key=lambda item: (
+                    candidate_steps.get(str(item.candidate.get("candidate_id", "")), 0),
+                    -float(item.candidate.get("risk_score", 0) or 0),
                 ),
-                None,
+                default=None,
             )
             if state is None:
                 stop_reason = "no work"
@@ -446,7 +520,7 @@ def run_agent_loop(
             actions = rank_actions(actions, state.missing)[:4]
             if not actions:
                 state.skipped = True
-                state.status = "skipped"
+                state.status = "degraded"
                 trace["limitations"].append(
                     f"{cid}: no eligible action for missing facts {sorted(state.missing)}"
                 )
@@ -509,6 +583,7 @@ def run_agent_loop(
                     "evidence_ids": [],
                     "limitations": [f"{type(exc).__name__}: {exc}"],
                 }
+            outcome = _normalize_action_outcome(outcome, chosen)
             duration_ms = int((time.monotonic() - started) * 1000)
             violations = _restore_forbidden(candidate, before)
             if violations:
@@ -625,6 +700,7 @@ def run_agent_loop(
             )
             model_info["calls"] = budget.stage_calls_used
             model_info["tokens"] = budget.stage_tokens_used
+            _finalize_trace(trace, states, stop_reason="running", status="partial")
             _write_trace(run, trace)
     except Exception as exc:  # noqa: BLE001 - stage degrades instead of aborting the run
         trace["limitations"].append(f"agent loop failed: {type(exc).__name__}: {exc}")
@@ -634,6 +710,14 @@ def run_agent_loop(
 
     if step >= max_steps and stop_reason == "no work":
         stop_reason = "step budget"
+    elif stop_reason == "no work" and states and all(
+        state.skipped or state.stalled or not state.missing for state in states
+    ):
+        stop_reason = "action catalog exhausted"
+
+    for state in states:
+        if state.missing and not state.skipped and not state.stalled:
+            state.status = "degraded"
 
     enriched = {str(state.candidate.get("candidate_id", "")): state.candidate for state in states}
     try:

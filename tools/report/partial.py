@@ -107,6 +107,8 @@ def _agent_section(trace: dict[str, Any]) -> list[str]:
         f"回退 {model.get('fallback_count', 0)} 次",
         f"- 停止/当前原因：{summary.get('stop_reason', 'unknown')}",
     ]
+    if trace.get("enabled"):
+        lines.append("- 执行路径：[打开交互式 Agent 轨迹](artifacts/agent_execution.html)")
     if actions:
         lines.append(
             "- 动作分布："

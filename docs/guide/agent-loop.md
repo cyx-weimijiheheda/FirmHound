@@ -51,6 +51,10 @@ v1 不在 loop 内运行 BOND；BOND 仍在 `CONSTRAINED_VALIDATION` 阶段。
 | `agent.no_progress_limit` | 2 | 连续无进步后停滞该候选 |
 | `agent.max_action_failures` | 3 | 连续失败后停滞该候选 |
 
+候选按轮次轮转；同一轮优先处理 `risk_score` 较高者。单候选的每轮动作数、全局
+步数、工具调用数和墙钟时间仍受上表预算限制。预算用尽但仍有待查事实时，候选
+状态会标为 `degraded`，不会被误记成已解决。
+
 对应 CLI 参数：`--agent-max-candidates`、`--agent-max-steps`、
 `--agent-max-steps-per-candidate`、`--agent-max-tool-calls`、
 `--agent-max-seconds`、`--agent-no-progress-limit`。
@@ -158,10 +162,15 @@ agent:
 
 - `runs/<id>/artifacts/agent_trace.json`：通过 `agent_trace.schema.json` 校验；
   记录候选、动作、选择者、证据 ID、预算、停止原因、limitations。
+- `runs/<id>/artifacts/agent_execution.html`：自包含的交互式执行路径图。按真实顺序
+  展示候选、规则允许的动作、实际选择、选择来源、结果、证据和待查事实；可按候选
+  筛选并打开步骤详情。虚线灰色节点是合法备选，不代表执行过。页面无外部资源，
+  可离线打开；分析中每一步完成后会更新。
 - `runs/<id>/artifacts/ranking.json`：enrich 后重新评分排序。
 - `runs/<id>/evidence/ev-*.json`：`stage=AGENT_LOOP` 的确定性事实。
 - `runs/<id>/decisions/dec-*.json`：`actor=model|rule` 的动作选择记录。
-- `report.md` 第 24 节「自主分析轨迹」：只渲染计数和结论边界，不渲染模型原文。
+- `report.md` 第 24 节「自主分析轨迹」：提供执行路径图链接，只渲染计数和结论边界，
+  不渲染模型原文。
 - 中断或仍在运行时，可用 `fsa report <run-id>` 生成 `report.partial.md` 快照；
   它只读已有产物，不跑分析、验证或模型。
 

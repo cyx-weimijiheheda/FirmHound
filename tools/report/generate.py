@@ -193,6 +193,7 @@ def _agent_summary(trace: dict[str, Any], *, requested: bool = False) -> str:
         f"停止原因：{summary.get('stop_reason', 'unknown')}；"
         f"未解决候选：{unresolved}。"
         "模型仅参与动作选择，不参与漏洞结论。"
+        "执行路径：[打开交互式 Agent 轨迹](artifacts/agent_execution.html)。"
     )
 
 

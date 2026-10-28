@@ -440,7 +440,8 @@ RANK/Verifier → mini-BOND 约束验证。FirmRec 是已知漏洞复发扫描�
 `conclusion_category` / `status` / `risk_level`，最终裁决仍由反证验证器产生。
 
 默认关闭；Blind Run 强制禁用；`standard` tier 不联网、不仿真；`dynamic` / `external`
-需要显式参数。产物为 `artifacts/agent_trace.json` 与报告第 24 节。详见
+需要显式参数。Agent 按风险分数轮转候选，生成 `artifacts/agent_trace.json` 与
+可离线打开的 `artifacts/agent_execution.html` 执行路径图，报告第 24 节提供入口。详见
 [`docs/guide/agent-loop.md`](docs/guide/agent-loop.md)。
 
 ## 评分与结论模型
