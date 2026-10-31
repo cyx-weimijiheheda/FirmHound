@@ -69,6 +69,7 @@ public class ExportCfgCg extends GhidraScript {
             Set<String> callees = new LinkedHashSet<>();
             Set<String> strings = new LinkedHashSet<>();
             List<String> blocks = new ArrayList<>();
+            List<String> callSites = new ArrayList<>();
 
             CodeBlockIterator blockIterator = blockModel.getCodeBlocksContaining(
                 function.getBody(), monitor
@@ -91,7 +92,16 @@ public class ExportCfgCg extends GhidraScript {
                         if (callee == null) {
                             callee = currentProgram.getFunctionManager().getFunctionContaining(target);
                         }
-                        if (callee != null) callees.add(address(callee.getEntryPoint()));
+                        if (callee != null) {
+                            String calleeAddr = address(callee.getEntryPoint());
+                            callees.add(calleeAddr);
+                            if (callSites.size() < 4096) {
+                                callSites.add(
+                                    "{\"addr\":" + q(address(instruction.getAddress()))
+                                    + ",\"callee\":" + q(calleeAddr) + "}"
+                                );
+                            }
+                        }
                     }
                     if (reference.getReferenceType().isData()) {
                         Data data = listing.getDataAt(target);
@@ -109,7 +119,8 @@ public class ExportCfgCg extends GhidraScript {
             callgraph.put(address, callees);
             String functionJson = "{\"name\":" + q(function.getName())
                 + ",\"strings\":" + stringsJson(strings)
-                + ",\"basic_blocks\":[" + String.join(",", blocks) + "]}";
+                + ",\"basic_blocks\":[" + String.join(",", blocks) + "]"
+                + ",\"call_sites\":[" + String.join(",", callSites) + "]}";
             functionsJson.put(address, functionJson);
         }
 

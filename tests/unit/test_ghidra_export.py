@@ -22,13 +22,32 @@ def _export() -> dict:
                 "name": "handle_ping",
                 "strings": ['"QUERY_STRING"', '"ping -c 1 %s"'],
                 "basic_blocks": [],
+                # getenv -> system -> fgets: fgets only consumes the output.
+                "call_sites": [
+                    {"addr": "0x400500", "callee": "0x400370"},
+                    {"addr": "0x400520", "callee": "0x4003b0"},
+                    {"addr": "0x400540", "callee": "0x400360"},
+                ],
             },
+            "0x400600": {
+                "name": "handle_cmd",
+                "strings": ['"QUERY_STRING"'],
+                "basic_blocks": [],
+                # fgets -> system: the source call precedes the sink call.
+                "call_sites": [
+                    {"addr": "0x400620", "callee": "0x400360"},
+                    {"addr": "0x400640", "callee": "0x4003b0"},
+                ],
+            },
+            "0x400360": {"name": "fgets", "strings": [], "basic_blocks": []},
             "0x400370": {"name": "getenv", "strings": [], "basic_blocks": []},
             "0x4003b0": {"name": "system", "strings": [], "basic_blocks": []},
             "0x404028": {"name": "system", "strings": [], "basic_blocks": []},
         },
         "callgraph": {
-            "0x4004f6": ["0x400370", "0x4003b0"],
+            "0x4004f6": ["0x400370", "0x4003b0", "0x400360"],
+            "0x400600": ["0x400360", "0x4003b0"],
+            "0x400360": [],
             "0x400370": [],
             "0x4003b0": ["0x404028"],
             "0x404028": [],
@@ -55,6 +74,19 @@ def test_summarize_functions_and_chain_callers() -> None:
     assert caller["same_func_source"] is True
     assert chain_callers(summary, "system", source_value="QUERY_STRING")["status"] == "ok"
     assert chain_callers(summary, "system", source_value="DIAG")["status"] == "no-callers"
+
+
+def test_chain_callers_requires_source_before_sink() -> None:
+    records = summarize_functions(_export())
+    ping = next(item for item in records if item["name"] == "handle_ping")
+    assert ping["call_sites"][0] == {"addr": "0x400500", "callee": "0x400370"}
+
+    summary = {"functions": records}
+    callers = chain_callers(summary, "system", source_value="fgets")["sink_callers"]
+
+    # handle_ping calls fgets only after system (it consumes popen/system output);
+    # handle_cmd calls fgets before system and is therefore a real pairing.
+    assert [item["func_name"] for item in callers] == ["handle_cmd"]
 
 
 def test_apply_export_marks_summary_full() -> None:

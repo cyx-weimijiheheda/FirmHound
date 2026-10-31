@@ -148,6 +148,21 @@ def export_binary(
     }
 
 
+def _call_sites(info: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalize exported call sites (instruction address -> callee entry)."""
+    sites: list[dict[str, str]] = []
+    for item in info.get("call_sites") or []:
+        if not isinstance(item, dict):
+            continue
+        addr = str(item.get("addr") or "")
+        callee = str(item.get("callee") or "")
+        if addr and callee:
+            sites.append({"addr": addr, "callee": callee})
+        if len(sites) >= 4096:
+            break
+    return sites
+
+
 def summarize_functions(export: dict[str, Any]) -> list[dict[str, Any]]:
     """Convert a Ghidra export into ``binary_summary.functions`` records."""
     functions = export.get("functions") or {}
@@ -184,6 +199,7 @@ def summarize_functions(export: dict[str, Any]) -> list[dict[str, Any]]:
                 "callees": callee_names,
                 "caller_addrs": reverse.get(addr, []),
                 "callee_addrs": callee_addrs,
+                "call_sites": _call_sites(info),
                 "strings": strings,
                 "is_source": bool(classify_source(name))
                 or any(classify_source(item) for item in strings),
@@ -204,6 +220,41 @@ def _name_matches(name: str, sink: str) -> bool:
     return normalized == target or normalized.endswith(f"_{target}")
 
 
+def _source_can_precede_sink(
+    caller: dict[str, Any],
+    source_value: str | None,
+    sink_func: str,
+    by_addr: dict[str, dict[str, Any]],
+) -> bool:
+    """Reject pairings where the source call only happens after the sink call.
+
+    A same-function ``fgets`` that consumes the output of ``popen`` is not an
+    input to that ``popen``. Call-site addresses let us distinguish the two
+    without claiming argument-level data flow. Old exports have no
+    ``call_sites``; in that case we keep the previous behaviour.
+    """
+    sites = caller.get("call_sites") or []
+    if not sites or not source_value:
+        return True
+    needle = str(source_value).lower()
+    source_addrs: list[int] = []
+    sink_addrs: list[int] = []
+    for site in sites:
+        try:
+            addr = int(str(site.get("addr")), 16)
+        except (TypeError, ValueError):
+            continue
+        callee = by_addr.get(str(site.get("callee"))) or {}
+        name = str(callee.get("name") or "")
+        if _name_matches(name, sink_func):
+            sink_addrs.append(addr)
+        if needle in name.lower():
+            source_addrs.append(addr)
+    if not source_addrs or not sink_addrs:
+        return True
+    return any(source < sink for source in source_addrs for sink in sink_addrs)
+
+
 def chain_callers(
     summary: dict[str, Any],
     sink_func: str,
@@ -215,6 +266,11 @@ def chain_callers(
     keep only callers that reference that source in their strings or callee
     names. This prevents a generic source from being paired with an unrelated
     sink caller in the same binary.
+
+    If the export carries ``call_sites`` and the source is a callee, also
+    require a source call that can precede the sink call. This rejects the
+    common "source consumes the sink's output" pattern (for example
+    ``popen("ps -ax")`` followed by ``fgets`` over its pipe).
     """
     functions = [
         item
@@ -258,6 +314,8 @@ def chain_callers(
                 )
                 if not any(needle in item.lower() for item in references):
                     continue
+            if not _source_can_precede_sink(caller, source_value, sink_func, by_addr):
+                continue
             filters = [
                 str((by_addr.get(str(item)) or {}).get("name") or item)
                 for item in caller.get("callee_addrs") or []
