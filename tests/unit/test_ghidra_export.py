@@ -25,11 +25,13 @@ def _export() -> dict:
             },
             "0x400370": {"name": "getenv", "strings": [], "basic_blocks": []},
             "0x4003b0": {"name": "system", "strings": [], "basic_blocks": []},
+            "0x404028": {"name": "system", "strings": [], "basic_blocks": []},
         },
         "callgraph": {
             "0x4004f6": ["0x400370", "0x4003b0"],
             "0x400370": [],
-            "0x4003b0": [],
+            "0x4003b0": ["0x404028"],
+            "0x404028": [],
         },
     }
 
@@ -48,8 +50,11 @@ def test_summarize_functions_and_chain_callers() -> None:
     assert chain["sink_callers"]
     caller = chain["sink_callers"][0]
     assert caller["func_name"] == "handle_ping"
+    assert caller["func_addr"] == int("0x4004f6", 16)
     assert caller["sink"] == "system"
     assert caller["same_func_source"] is True
+    assert chain_callers(summary, "system", source_value="QUERY_STRING")["status"] == "ok"
+    assert chain_callers(summary, "system", source_value="DIAG")["status"] == "no-callers"
 
 
 def test_apply_export_marks_summary_full() -> None:

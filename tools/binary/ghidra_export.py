@@ -204,8 +204,18 @@ def _name_matches(name: str, sink: str) -> bool:
     return normalized == target or normalized.endswith(f"_{target}")
 
 
-def chain_callers(summary: dict[str, Any], sink_func: str) -> dict[str, Any]:
-    """Find Ghidra callgraph edges whose callee matches ``sink_func``."""
+def chain_callers(
+    summary: dict[str, Any],
+    sink_func: str,
+    source_value: str | None = None,
+) -> dict[str, Any]:
+    """Find Ghidra callgraph edges whose callee matches ``sink_func``.
+
+    When ``source_value`` is given (for example ``QUERY_STRING`` or ``recv``),
+    keep only callers that reference that source in their strings or callee
+    names. This prevents a generic source from being paired with an unrelated
+    sink caller in the same binary.
+    """
     functions = [
         item
         for item in (summary.get("functions") or [])
@@ -214,6 +224,12 @@ def chain_callers(summary: dict[str, Any], sink_func: str) -> dict[str, Any]:
     by_addr = {str(item["addr"]): item for item in functions}
     callers: list[dict[str, Any]] = []
     for caller_addr, caller in by_addr.items():
+        caller_name = str(caller.get("name") or "")
+        # A PLT/thunk function often calls another symbol with the same name
+        # (e.g. system -> system). Skip it so the reported enclosing function
+        # is a real caller, not the import stub.
+        if _name_matches(caller_name, sink_func):
+            continue
         for callee_addr in caller.get("callee_addrs") or []:
             callee = by_addr.get(str(callee_addr))
             if callee is None or not _name_matches(str(callee.get("name")), sink_func):
@@ -233,6 +249,15 @@ def chain_callers(summary: dict[str, Any], sink_func: str) -> dict[str, Any]:
                     if classify_source(sibling_name):
                         source = sibling_name
                         break
+            if source_value:
+                needle = str(source_value).lower()
+                references = [str(item) for item in caller.get("strings") or []]
+                references.extend(
+                    str((by_addr.get(str(item)) or {}).get("name") or item)
+                    for item in caller.get("callee_addrs") or []
+                )
+                if not any(needle in item.lower() for item in references):
+                    continue
             filters = [
                 str((by_addr.get(str(item)) or {}).get("name") or item)
                 for item in caller.get("callee_addrs") or []
@@ -256,6 +281,12 @@ def chain_callers(summary: dict[str, Any], sink_func: str) -> dict[str, Any]:
                     "same_func_filters": filters,
                 }
             )
+    callers.sort(
+        key=lambda item: (
+            not bool(item.get("same_func_source")),
+            int(item.get("func_addr", 0)),
+        )
+    )
     return {"status": "ok" if callers else "no-callers", "sink_callers": callers}
 
 

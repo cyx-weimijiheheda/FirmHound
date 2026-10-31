@@ -58,7 +58,9 @@ def _enrich_with_chain(
     callers = report.get("sink_callers", []) or []
     ghidra_mode = False
     if not callers and summary.get("functions"):
-        ghidra_report = chain_callers(summary, sink_func)
+        source = candidate.get("source") or {}
+        source_value = str(source.get("string") or source.get("api") or "") or None
+        ghidra_report = chain_callers(summary, sink_func, source_value=source_value)
         callers = ghidra_report.get("sink_callers", []) or []
         ghidra_mode = bool(callers)
     if not callers:
