@@ -211,6 +211,21 @@ def _auth_label(candidate: dict[str, Any]) -> str:
     return "未知"
 
 
+def _validation_summary(validation: dict[str, Any]) -> str:
+    if not isinstance(validation, dict) or not validation:
+        return "状态：未执行；不将加载测试表述为漏洞复现。"
+    status = validation.get("status", "未执行")
+    loader = validation.get("loader")
+    qemu = validation.get("qemu")
+    if loader == "native":
+        detail = "native busybox 加载检查"
+    elif qemu:
+        detail = f"QEMU 加载检查（{qemu}）"
+    else:
+        detail = "加载检查"
+    return f"状态：{status}；{detail}；不将加载测试表述为漏洞复现。"
+
+
 def _evidence_table(
     ranked: list[dict[str, Any]],
     verdicts: list[dict[str, Any]],
@@ -374,7 +389,14 @@ def _limitations_summary(grounding: dict[str, Any]) -> str:
         "静态 source/sink 共存不等于数据流可达；缺少调用链的候选必须通过反编译或隔离动态验证。",
     ]
     decompile_status = grounding.get("decompile_status")
-    if decompile_status and decompile_status != "unknown":
+    if decompile_status in {"ok", "full"} and grounding.get("decompile_backend") == "ghidra":
+        reason = grounding.get("decompile_reason") or "未记录原因"
+        bullets.append(
+            "反编译：Ghidra 已导出 "
+            f"{grounding.get('decompile_analyzed', 0)}/"
+            f"{grounding.get('decompile_selected', 0)} 个二进制（{reason}）。"
+        )
+    elif decompile_status and decompile_status != "unknown":
         reason = grounding.get("decompile_reason") or "未记录原因"
         fallback = grounding.get("decompile_fallback") or "unknown"
         bullets.append(
@@ -382,13 +404,27 @@ def _limitations_summary(grounding: dict[str, Any]) -> str:
         )
     unsupported = grounding.get("chain_unsupported_architectures") or []
     if unsupported:
-        bullets.append(
-            "检测到架构 "
-            + ", ".join(str(item) for item in unsupported)
-            + "；当前调用链恢复仅支持 "
-            + ", ".join(str(item) for item in (grounding.get("chain_supported_arches") or []))
-            + f"，因此 {grounding.get('candidates_without_chain', 0)} 条候选没有调用链证据。"
+        supported = ", ".join(
+            str(item) for item in (grounding.get("chain_supported_arches") or [])
         )
+        if grounding.get("decompile_backend") == "ghidra" and grounding.get(
+            "candidates_with_chain"
+        ):
+            bullets.append(
+                "检测到架构 "
+                + ", ".join(str(item) for item in unsupported)
+                + f"；Ghidra 已为 {grounding.get('candidates_with_chain', 0)} 条候选补出调用链，"
+                f"其余 {grounding.get('candidates_without_chain', 0)} 条仍无链；"
+                f"基础 capstone fallback 仅支持 {supported}。"
+            )
+        else:
+            bullets.append(
+                "检测到架构 "
+                + ", ".join(str(item) for item in unsupported)
+                + "；当前调用链恢复仅支持 "
+                + supported
+                + f"，因此 {grounding.get('candidates_without_chain', 0)} 条候选没有调用链证据。"
+            )
     else:
         bullets.append(
             f"调用链证据：{grounding.get('candidates_with_chain', 0)}/"
@@ -563,7 +599,7 @@ def _section_body(
             f"反证：{fp_summary['counterevidence_total']}；"
             f"证据完整度：{fp_summary['evidence_completeness']}。"
         ),
-        "本地动态验证": f"状态：{validation.get('status', '未执行') if isinstance(validation, dict) else '未执行'}；不将加载测试表述为漏洞复现。",
+        "本地动态验证": _validation_summary(validation),
         "外部分析器结果": _external_section(external),
         "复发漏洞（FirmRec）": (
             f"复发发现：{_finding_count(recurrence)} 条；盲跑隔离：{isolated} 条；"

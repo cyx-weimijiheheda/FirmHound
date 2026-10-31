@@ -154,7 +154,7 @@ def export_cfg_cg(binary: Path, out_json: Path) -> dict[str, Any]:
         }
 
     out_json.parent.mkdir(parents=True, exist_ok=True)
-    project_dir = out_json.parent / ".ghidra-projects"
+    project_dir = out_json.parent / "ghidra-projects"
     project_dir.mkdir(parents=True, exist_ok=True)
     project_name = f"bond_{uuid.uuid4().hex[:12]}"
     command = [

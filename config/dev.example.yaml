@@ -18,12 +18,20 @@ analysis:
   max_strings_per_binary: 200
   verify_top_k: 5
 
+# Optional Ghidra headless enrichment for the DECOMPILE stage. When Ghidra is
+# unavailable the stage degrades to the pyelftools fallback and the pipeline continues.
+decompile:
+  backend: auto                    # auto | ghidra | fallback
+  ghidra_headless: ""              # empty -> GHIDRA_HEADLESS or analyzeHeadless on PATH
+  max_binaries: 5                  # top-N by triage score
+  timeout_s: 600
+
 # --------------------------------------------------------------------------- #
 # Bounded agent loop (optional; disabled by default)
 #
-# The loop collects facts for existing candidates. The model may only rank the
-# rule-generated action list; it never supplies tool names, paths, parameters,
-# or conclusions. `tier=dynamic|external` is an explicit opt-in.
+# The loop collects facts for existing candidates. The model ranks the
+# rule-generated action list; tool names, paths, parameters and conclusions
+# come from code. `tier=dynamic|external` is an explicit opt-in.
 # --------------------------------------------------------------------------- #
 agent:
   enabled: false
@@ -41,7 +49,7 @@ agent:
     enabled: auto           # auto | true | false
     max_calls: 8
     max_tokens: 4000
-    allow_public: false     # set true only for an explicitly allowed remote endpoint
+    allow_public: false     # set true for an explicitly allowed remote endpoint
   progress:
     every_steps: 10         # report agent progress every N steps
     show_tokens: true       # include token/call counters in the progress line
@@ -75,7 +83,7 @@ logging:
 # External analyzers (SaTC / FirmRec / KLEE / BOND)
 #
 # Every tool is DISABLED by default. The orchestrator discovers them through
-# tools/registry/external.yaml, but only runs one when its `enabled` is true.
+# tools/registry/external.yaml, and runs each tool whose `enabled` is true.
 # The whole `external` block is also gated by the top-level `enabled` flag, so
 # setting it to false turns off the entire external track regardless of per-tool
 # flags. This is the F7 degradation safety net: with everything off, the pipeline
@@ -101,7 +109,7 @@ external:
   firmrec:
     enabled: false
     # Recurring-vulnerability detection. Requires a known-vuln signature DB and
-    # is isolated so it never participates in a blind benchmark run.
+    # is isolated from blind benchmark runs.
     backend: auto                  # auto | local | docker
     # Native backend (recommended). repo_dir must be inside a safety-whitelisted
     # path (e.g. ./vendor/FirmRec) or explicitly added to config/safety.yaml.
@@ -123,7 +131,7 @@ external:
     vuln_firmware_dir: ""          # our mode: <CVE>/<firmware image> + input descriptor
     signature_db: ./benchmarks/CVEs
     vuln_info_source: our          # our | official (our = fixture/methodology mode)
-    mode: signature_only           # blind runs are forbidden
+    mode: signature_only           # blind runs keep this disabled
     timeout_s: 7200                # pipeline + PostgreSQL warm-up cap
     llm_key: ""                    # optional; upstream input-entry search
     llm_url: ""                    # full chat/completions endpoint
@@ -145,13 +153,13 @@ external:
   bond:
     enabled: false
     # Constraint-directed fuzzing (mini-BOND). PoC outputs are sanitized before persistence.
-    target: emulation              # HARD enforce: only "emulation" is allowed; real devices are refused
+    target: emulation              # target is limited to emulation instances
     target_ip: ""                  # MUST be a private RFC1918 address when emulation is live (safety gate)
     target_port: 80                # HTTP port exposed by the isolated emulator
     authorized: false              # operator authorization -> must be true to fuzz
     local_lab: false               # lab context flag
     baseline_ready: false          # clean-baseline snapshot flag (for crash diffing)
-    simulate: true                 # fixture-only switch; this mode is skipped and emits no finding
+    simulate: true                 # fixture-only switch; this mode is skipped and records no finding
     request_timeout_s: 5           # per-request timeout; response bodies are capped and hashed
     trigger_marker: ""             # explicit harmless response marker required for triggered=true
     probe_parameter: ""            # explicit injectable parameter; empty disables marker probe

@@ -44,8 +44,11 @@ tags: [binary, decompile, triage, m4, elf]
    - 交叉信号是命令注入的高价值线索，但**危险 API 导入 ≠ 漏洞证据**。
 
 4. **深度反编译（仅 Top-N）**
-   - Ghidra `analyzeHeadless` 批处理：导入 → 分析 → 导出函数表/调用边/字符串引用/imports/xrefs/每函数伪 C。
-   - 失败走 `decompile_fallback`：objdump 反汇编 + strings + reloc 降级摘要，`decompile_status=fallback`，绝不使整个 run 失败。
+   - 实现：`tools/binary/ghidra_export.py` + `tools/binary/pipeline.py::execute_decompile`。
+   - Ghidra `analyzeHeadless` 批处理：导入 → 分析 → 用 `ExportCfgCg.java` 导出函数表/调用边/字符串引用；结果写回 `binary_summaries.json` 的 `functions`，`decompile_status=full`。
+   - Top-N 选择按 triage 分数、攻击面/启动引用、`system/popen` 等危险 sink 和 web 路径加权，避免同分时漏掉 httpd。
+   - 失败或未配置 Ghidra 时走 fallback：objdump 反汇编 + strings + reloc 降级摘要，`decompile_status=fallback`，绝不使整个 run 失败。
+   - Ghidra 路径只从本地 `.env` 的 `GHIDRA_HEADLESS`、环境变量或 `decompile.ghidra_headless` 读取，不写入仓库配置。
 
 5. **结构化摘要（summarize）**
    - 每函数生成 name/addr、callers/callees、引用字符串（分类）、是否 source/sink/auth/validation（规则库 + vendor 字典判定）。

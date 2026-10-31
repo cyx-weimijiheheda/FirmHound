@@ -727,7 +727,16 @@ def doctor(ctx: click.Context, include_external_probes: bool, json_output: bool)
     # ``python`` alias is not guaranteed to exist (e.g. Debian/Ubuntu
     # without python-is-python3), so do not require it here.
     required_commands = ["python3"]
-    optional_commands = ["docker", "binwalk", "unsquashfs", "sasquatch", "7z", "readelf", "klee"]
+    optional_commands = [
+        "docker",
+        "binwalk",
+        "unsquashfs",
+        "sasquatch",
+        "7z",
+        "readelf",
+        "klee",
+        "busybox",
+    ]
     command_checks = {cmd: bool(shutil.which(cmd)) for cmd in required_commands + optional_commands}
     missing_commands = [
         cmd for cmd in required_commands + optional_commands if not command_checks[cmd]
@@ -737,6 +746,21 @@ def doctor(ctx: click.Context, include_external_probes: bool, json_output: bool)
         "available": command_checks,
         "missing": missing_commands,
         "install_hints": {cmd: hint for cmd in missing_commands if (hint := hint_for(cmd))},
+    }
+
+    from tools.binary.ghidra_export import resolve_ghidra_headless
+
+    ghidra = resolve_ghidra_headless(config)
+    decompile_cfg = config.get("decompile") if isinstance(config, dict) else {}
+    checks["decompile"] = {
+        "status": "ok" if ghidra else "degraded",
+        "backend": str((decompile_cfg or {}).get("backend", "auto")),
+        "ghidra_headless": ghidra,
+        "note": (
+            "Ghidra headless is available for DECOMPILE enrichment"
+            if ghidra
+            else "Ghidra not found; DECOMPILE will use the pyelftools fallback"
+        ),
     }
 
     platform_info = detect_platform()
@@ -793,7 +817,7 @@ def doctor(ctx: click.Context, include_external_probes: bool, json_output: bool)
         f"{console.muted('platform')}: {platform_info.family} · {platform_info.distro_name}"
         f" · {platform_info.package_manager} · {platform_info.libc}"
     )
-    for name in ("paths", "schemas", "runtime", "commands"):
+    for name in ("paths", "schemas", "runtime", "commands", "decompile"):
         item = checks.get(name)
         if item is None:
             continue
@@ -811,6 +835,8 @@ def doctor(ctx: click.Context, include_external_probes: bool, json_output: bool)
             console.echo(f"  {console.warn('missing optional tools: ' + missing)}")
             for cmd, hint in (item.get("install_hints") or {}).items():
                 console.echo(f"  {console.muted(cmd)} → {console.paint(hint, console.CYAN)}")
+        elif name == "decompile" and item["status"] != "ok":
+            console.echo(f"  {console.warn(item.get('note', ''))}")
 
 
 @main.command(name="unpack-diagnose")

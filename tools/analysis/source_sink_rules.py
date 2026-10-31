@@ -127,10 +127,15 @@ def classify_source(name: str) -> dict[str, Any] | None:
 
 
 def classify_sink(name: str) -> dict[str, Any] | None:
-    """Classify a function name as a sink, or ``None``."""
+    """Classify a function name as a sink, or ``None``.
+
+    Imported names on some toolchains carry a version suffix
+    (``system@GLIBC_2.2.5``). Strip it for the candidate identity so the
+    versioned and unversioned imports do not become two different candidates.
+    """
     for category, rule in SINK_RULES.items():
         if _match(name, rule["patterns"]):
-            return {"function": name, "type": category}
+            return {"function": name.split("@", 1)[0], "type": category}
     return None
 
 
@@ -156,26 +161,78 @@ def match_binary(binary_summary: dict[str, Any]) -> dict[str, Any]:
     validation_functions = set(binary_summary.get("validation_functions", []))
 
     sources: list[dict[str, Any]] = []
+    seen_sources: set[tuple[str, str]] = set()
+
+    def add_source(item: dict[str, Any]) -> None:
+        key = (str(item.get("type", "")), str(item.get("api") or item.get("string") or ""))
+        if key in seen_sources:
+            return
+        seen_sources.add(key)
+        sources.append(item)
+
     for name in imports:
         classified = classify_source(name)
         if classified:
-            sources.append({"api": name, **classified})
+            add_source({"api": name, **classified})
     for text in strings:
         classified = classify_source(text)
         if classified:
-            sources.append({"string": text, **classified})
+            add_source({"string": text, **classified})
 
     sinks: list[dict[str, Any]] = []
+    seen_sinks: set[tuple[str, str]] = set()
+
+    def add_sink(item: dict[str, Any]) -> None:
+        key = (str(item.get("function", "")), str(item.get("type", "")))
+        if key in seen_sinks:
+            return
+        seen_sinks.add(key)
+        sinks.append(item)
+
     for name in imports:
         classified = classify_sink(name)
         if classified:
-            sinks.append(classified)
+            add_sink(classified)
 
     validations: list[dict[str, Any]] = []
+    seen_validations: set[tuple[str, str]] = set()
+
+    def add_validation(api: str, kind: str) -> None:
+        key = (api, kind)
+        if key in seen_validations:
+            return
+        seen_validations.add(key)
+        validations.append({"api": api, "kind": kind})
+
     for name in imports:
         kind = classify_validation(name)
         if kind:
-            validations.append({"api": name, "kind": kind})
+            add_validation(name, kind)
+
+    # Ghidra-enriched summaries carry function-level strings and imported
+    # thunk names. They let a stripped/MIPS daemon expose the same source/sink
+    # signals without pretending the data flow is already proven.
+    for func in functions:
+        if not isinstance(func, dict):
+            continue
+        func_name = str(func.get("name") or "")
+        if func_name:
+            classified = classify_sink(func_name)
+            if classified:
+                add_sink(classified)
+            source_item = classify_source(func_name)
+            if source_item:
+                add_source({"api": func_name, **source_item})
+            validation_kind = classify_validation(func_name)
+            if validation_kind:
+                add_validation(func_name, validation_kind)
+        for text in func.get("strings") or []:
+            source_item = classify_source(str(text))
+            if source_item:
+                add_source({"string": str(text), **source_item})
+            validation_kind = classify_validation(str(text))
+            if validation_kind:
+                add_validation(str(text), validation_kind)
 
     auth_markers: list[str] = []
     for func in functions:

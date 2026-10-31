@@ -107,7 +107,7 @@ external:
 | 无 Web 前端 | `Clustering_result_v2.result` 很空 | 工具固有局限，记 `limitation` 即可 |
 | share2sink 依赖 ref2share | 直接跑报错 | **先跑 `ref2share`**，再用 `--ref2share_result` 指过去 |
 | 挂载失败 | `docker: invalid mount config` | 确认宿主路径存在、Docker 有权访问该目录；Linux 下无需路径翻译 |
-| 解包的符号链接 | rootfs 复制失败 | 复用 `fsa/utils/traverse.py` 符号链接容错，别自己 `cp -r` |
+| 解包的符号链接 | rootfs 复制失败 | 复用 `fsa/utils/traverse.py` 的符号链接容错；复制 rootfs 时使用项目工具 |
 
 ---
 

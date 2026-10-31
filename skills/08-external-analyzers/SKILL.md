@@ -39,7 +39,7 @@ tags: [external, orchestration, satc, firmrec, klee, bond, fusion]
 - 总开关 `external.enabled=false` 不可被任何单工具开关绕过。
 - 工作目录必须位于 `./tmp/external/<tool>/<run_id>/`。
 - BOND 只允许 `target=emulation`、私有网段、授权、本地实验室和基线就绪。
-- 禁止 curl/wget 调模型；禁止真机、公网和可武器化 PoC。
+- 模型调用限定为离线或本地端点；验证环境限定为仿真实例、私有网段和无害 PoC。
 - `poc_sanitized != true` 的触发证据一律拒绝。
 
 ## 失败降级路径

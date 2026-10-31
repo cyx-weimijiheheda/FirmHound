@@ -178,6 +178,19 @@ def build_grounding(
         "decompile_status": decompile_status,
         "decompile_reason": decompile_reason,
         "decompile_fallback": decompile_fallback,
+        "decompile_backend": (
+            decompile.get("backend") if isinstance(decompile, dict) else None
+        ),
+        "decompile_analyzed": (
+            int(decompile.get("analyzed_binaries") or 0)
+            if isinstance(decompile, dict)
+            else 0
+        ),
+        "decompile_selected": (
+            int(decompile.get("selected_binaries") or 0)
+            if isinstance(decompile, dict)
+            else 0
+        ),
         "external_tools": external_tools,
         "model_used": model_used,
         "model_provider": model.get("provider"),

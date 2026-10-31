@@ -14,11 +14,13 @@ tools:
   - name: tools.binary.decompile
     module_path: tools.binary.pipeline
     function_name: execute_decompile
-    description: Record configured decompiler output or an honest static fallback.
+    description: Enrich top binaries with Ghidra or record an honest static fallback.
     args_schema:
       type: object
+      additionalProperties: false
       properties:
         run_dir: {type: string}
+        config_path: {type: string}
       required: [run_dir]
 
   - name: tools.audit.static

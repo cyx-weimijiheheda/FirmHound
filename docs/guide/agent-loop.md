@@ -4,8 +4,8 @@
 针对候选的 `decisive_missing_fact`，从封闭动作目录中选择下一步取证动作，把事实
 补齐后再交给反证验证。
 
-它**不是**自由 Agent：模型不能生成工具名、路径、参数、shell 命令或漏洞结论；
-所有动作、参数和写入位置都由代码固定。
+它是一个**有界 Agent**：模型只在规则筛出的合法动作里排序/选择；工具名、路径、参数、
+shell 命令和漏洞结论都由代码产生，所有写入位置固定。
 
 ## 启用
 
@@ -95,7 +95,7 @@ fsa analyze <rootfs> --authorization-holder "设备所有者" --agent --progress
 
 ## AI 服务配置
 
-模型服务分三层，不要全部塞进 `config/dev.yaml`：
+模型服务分三层配置：
 
 | 内容 | 文件 |
 |---|---|
@@ -116,7 +116,7 @@ runtimes:
 ```
 
 ```bash
-# 项目根目录 .env（不要提交）
+# 项目根目录 .env（本地文件，已 gitignore）
 OPENAI_API_KEY=sk-xxx
 ```
 

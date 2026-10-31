@@ -13,6 +13,7 @@ from tools.analysis.source_sink_rules import match_binary
 from tools.audit.audit_constants import CHAIN_SINKS as _CHAIN_SINKS
 from tools.audit.audit_constants import KIND_BY_API as _KIND_BY_API
 from tools.binary.call_chain import recover_chains
+from tools.binary.ghidra_export import chain_callers
 from tools.pipeline_context import load_artifact, run_path, save_artifact
 
 _chain_cache: dict[str, dict[str, Any]] = {}
@@ -55,22 +56,39 @@ def _enrich_with_chain(
             _chain_cache[cache_key] = {"status": "failed", "sink_callers": []}
     report = _chain_cache[cache_key]
     callers = report.get("sink_callers", []) or []
+    ghidra_mode = False
+    if not callers and summary.get("functions"):
+        ghidra_report = chain_callers(summary, sink_func)
+        callers = ghidra_report.get("sink_callers", []) or []
+        ghidra_mode = bool(callers)
     if not callers:
         return
     for caller in callers:
         if caller.get("sink") != sink_func or caller.get("func_addr") is None:
             continue
         func_addr = caller["func_addr"]
+        caller_name = str(caller.get("func_name") or f"sub_{func_addr:x}")
+        sink_addr = caller.get("sink_addr", caller.get("call_addr"))
+        if sink_addr is None:
+            continue
         candidate["call_chain"] = [
             {
                 "addr": hex(func_addr),
-                "func": f"sub_{func_addr:x}",
-                "note": "enclosing function calls the sink",
+                "func": caller_name,
+                "note": (
+                    "Ghidra callgraph: enclosing function"
+                    if ghidra_mode
+                    else "enclosing function calls the sink"
+                ),
             },
             {
-                "addr": hex(caller["call_addr"]),
+                "addr": hex(sink_addr),
                 "func": sink_func,
-                "note": "sink call site",
+                "note": (
+                    "Ghidra callgraph: sink callee"
+                    if ghidra_mode
+                    else "sink call site"
+                ),
             },
         ]
         filters = caller.get("same_func_filters", []) or []
@@ -88,16 +106,28 @@ def _enrich_with_chain(
             candidate["counterevidence"] = [
                 ce for ce in candidate["counterevidence"] if ce != "call-chain-not-proven"
             ]
-        evidence_id = evidence_store.add(
-            run_id=run_id,
-            stage=stage,
-            type="decompile",
-            observation=(
+        if ghidra_mode:
+            observation = (
+                f"Ghidra callgraph: {caller_name} calls {sink_func} "
+                f"(callee {hex(sink_addr)}) in {binary_path}; "
+                f"same-function source: {caller.get('source') or caller.get('same_func_source')}"
+            )
+            tool = "ghidra"
+            evidence_stage = "DECOMPILE"
+        else:
+            observation = (
                 f"ARM32 disassembly: function sub_{func_addr:x} calls {sink_func} "
                 f"at 0x{caller['call_addr']:x} in {binary_path}; "
                 f"same-function source-API read: {caller.get('same_func_source')}"
-            ),
-            tool="tools.binary.call_chain",
+            )
+            tool = "tools.binary.call_chain"
+            evidence_stage = stage
+        evidence_id = evidence_store.add(
+            run_id=run_id,
+            stage=evidence_stage,
+            type="decompile",
+            observation=observation,
+            tool=tool,
             tool_version="1.0",
             source_file=binary_path,
             artifact_path=binary_path,

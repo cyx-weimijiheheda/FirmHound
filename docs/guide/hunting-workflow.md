@@ -85,7 +85,7 @@ make test
 
 下载时注意：
 
-1. 选 **Router Firmware / 升级软件** 那一栏，别下用户手册；
+1. 选 **Router Firmware / 升级软件** 那一栏；
 2. 文件一般是 `.zip` 或 `.bin`，下载完**解压 zip**，拿到 `.bin` 固件文件；
 3. 记录下载的**版本号**（如 V1.0.12.216），后面报告要用。
 
@@ -100,7 +100,7 @@ make test
     └── DIR-859_Ax_FW_113b03.bin     ← 你的固件（举例）
 ```
 
-> 注意：安全策略只允许分析 `firmware_samples/`、`runs/`、`tmp/`、`tests/fixtures/` 下的文件。固件放别处会被 `Policy rejected` 拒绝。
+> 注意：把固件放进 `firmware_samples/`、`runs/`、`tmp/` 或 `tests/fixtures/`，这四个目录在安全策略白名单内。
 
 ---
 
@@ -132,7 +132,7 @@ ls tmp/unpacked
 > sasquatch -d tmp/squashfs-root firmware_samples/<固件名>.bin
 > ```
 >
-> 还不行就用 `fsa unpack-diagnose <固件>` 看它建议的下一步（是加密、是自定义头、还是需要别的提取器）。工具**不会假装能解密**。
+> 还不行就用 `fsa unpack-diagnose <固件>` 看它建议的下一步（是加密、是自定义头、还是需要别的提取器）。工具会如实报告需要解密材料。
 
 ---
 
@@ -269,7 +269,7 @@ readelf -s httpd | grep system
 
 - 10 问全过 → `confirmed-issue`（确认漏洞）
 - 有认证/过滤但可绕过 → `high-confidence-candidate`
-- 有一项不满足 → 降级或 `false-positive`，别硬报
+- 有一项不满足 → 降级或标为 `false-positive`，报告保留未证实项
 
 ---
 
@@ -286,7 +286,7 @@ qemu-mips-static -L tmp/unpacked/_DIR-859_Ax_FW_113b03.bin.extracted/squashfs-ro
 **红线（必须遵守）**：
 
 - 只打自己下载的固件，目标 IP 必须私有网段
-- 只发无害 payload（`id`、`touch /tmp/lab_marker`），**禁止反弹 shell、持久化、下载执行**
+- 发送的 payload 限定为无害命令（`id`、`touch /tmp/lab_marker`）；反弹 shell、持久化、下载执行由安全策略拦截
 - 验证完不留后门、不改系统
 
 ---
@@ -325,7 +325,7 @@ fsa report hunt1 --limit 20
 | `fsa: command not found` | 没激活 venv / 没 `pip install -e .` | `source .venv/bin/activate` 后重装 |
 | `binwalk: command not found` | 没装或不在 PATH | `pipx install binwalk`（跨发行版通用），或把 `~/.local/bin` 加进 PATH |
 | `rootfs not found: xxx` | rootfs 路径写错了 | 先 `ls tmp/unpacked` 确认目录存在 |
-| `Policy rejected` | 固件放白名单外 / 命令含黑名单词 | 固件放 `firmware_samples/`，别用 `rm -rf` |
+| `Policy rejected` | 固件在白名单外 / 命令含黑名单词 | 把固件放进 `firmware_samples/`，命令使用白名单工具 |
 | 解包没出 rootfs | 固件加密 / 特殊格式 | 换 sasquatch 手动解，或 `fsa unpack-diagnose` 看建议 |
 | `Permission denied` | 脚本缺可执行位 | `chmod +x scripts/*.sh` |
 | 报告全是 LOW / 无候选 | 固件没漏洞或目标太老 | 换个还在更新的型号，或加大分析范围 |

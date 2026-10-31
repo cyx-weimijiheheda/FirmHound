@@ -11,10 +11,10 @@ tags: [external, bond, fuzz, emulation, poc_sanitize, m-external]
 ## 产品契约
 
 - 输入优先选择 `symex.reachable == true` 的候选；没有可达标记时可以尝试全部候选，但必须保留证据强度差异。
-- `simulate: true` 是不可用/跳过状态，不得创建产物、finding 或 `TRIGGERED` 记录。
-- `use_ghidra: true` 必须调用真实 Ghidra headless 和 `ghidra_scripts/ExportCfgCg.java`。工具缺失时明确降级，禁止合成 CFG/CG。
+- `simulate: true` 时保持无产物、无 finding、无 `TRIGGERED` 记录。
+- `use_ghidra: true` 时调用真实 Ghidra headless 和 `ghidra_scripts/ExportCfgCg.java`；工具缺失时明确降级，CFG/CG 只来自真实导出。
 - 真实验证使用内置、限时、限响应大小的 HTTP 探针。只有真实响应包含配置的 `trigger_marker` 时，才能设置 `validation.triggered=true`。
-- 未触发的真实探针只能证明“已尝试但未观察到标记”，不能证明目标安全。
+- 未触发的真实探针只证明“已尝试但未观察到标记”；目标安全性需要额外证据。
 
 ## 安全约束
 
@@ -25,9 +25,9 @@ tags: [external, bond, fuzz, emulation, poc_sanitize, m-external]
 3. `authorized=true`；
 4. `local_lab=true` 且 `baseline_ready=true`。
 
-任一道门失败都返回 `unsafe` 且保持零出站。禁止真实设备、公网地址、重定向和任意协议 URL。
+任一道门失败都返回 `unsafe` 且保持零出站；目标限定为仿真实例、私有地址和允许的 HTTP URL。
 
-所有持久化请求必须通过 `tools.external.bond.sanitize.sanitize_poc`。被拦截的内容只记录拒绝原因，不得写入 PoC 或报告。响应正文不落盘，只保存 HTTP 状态和 SHA-256。
+所有持久化请求必须通过 `tools.external.bond.sanitize.sanitize_poc`。被拦截的内容只记录拒绝原因，PoC 和报告保留脱敏摘要。响应正文不落盘，只保存 HTTP 状态和 SHA-256。
 
 ## 实现位置
 

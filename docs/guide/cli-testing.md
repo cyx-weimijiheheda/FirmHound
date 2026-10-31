@@ -14,7 +14,7 @@ fsa doctor --include-external-probes --json-output
 
 - `paths.status=ok`、`schemas.status=ok`
 - `runtime.default=offline` 时允许完全离线测试；要用在线模型时再确认 `model_api_key_present=true`
-- 外部工具缺失只能是 `degraded`，命令不得异常退出（退出码为 0）
+- 外部工具缺失时状态为 `degraded`，命令退出码保持 0
 
 ## 2. 任务理解
 
@@ -99,7 +99,7 @@ cat progress.log            # 含 [n/total] STAGE 开始行与 ok/degraded 结�
 - `--agent-show-tokens` 时明细含 `tok <used>/<limit>` 与 `calls <used>/<limit>`；
   `--no-agent-show-tokens` 时两者都不出现
 - 终端里明细按宽度自动换行成普通行，状态行只有一行；明细长度超过终端宽度时
-  不得出现状态行反复覆盖/残留
+  状态行保持单行，明细按终端宽度换行
 - `--progress-interval 0.2` 只改变刷新频率，不改变阶段结果
 - `--agent-print-model` 只在模型实际参与动作选择时输出经过校验的
   `model chose <action> (confidence ...): <reason>`；默认关闭，且不输出原始 prompt/回复
@@ -132,7 +132,38 @@ fsa analyze <ROOTFS_DIR> --input-type rootfs --depth full \
 - 仍然 `status=done`
 - `artifacts/external_findings/` 存在，或阶段产物记录 `skipped/degraded` 与 `limitation`
 - FirmRec 的结果不进入 `unified_candidates.json`
-- 没有 `poc_sanitized=true` 的证据不能把候选确认为真漏洞
+- 候选带上 `poc_sanitized=true` 的证据后才进入确认流程
+
+## 5.1 Ghidra / busybox（可选）
+
+```bash
+# 写在本地 .env（gitignore）
+cat >> .env <<'EOF'
+GHIDRA_HEADLESS=/opt/ghidra/support/analyzeHeadless
+BUSYBOX_BIN=/usr/bin/busybox
+EOF
+
+fsa doctor --json-output   # 看 checks.decompile.ghidra_headless
+
+# 最小固件 rootfs，跑 Ghidra + 本机 busybox 加载检查
+fsa analyze firmware_samples/firmhound-lab-0.1.0/rootfs \
+  --input-type rootfs --authorization-holder "local-lab" \
+  --depth full --allow-emulation --run-id lab-ghidra --no-agent
+
+jq '.status, .backend, .analyzed_binaries' runs/lab-ghidra/artifacts/decompile.json
+jq '.loader, .load_ok, .limitation' runs/lab-ghidra/artifacts/local_validation.json
+grep -A20 '## 14' runs/lab-ghidra/report.md
+```
+
+通过标准：
+
+- `decompile.json` 为 `status=ok`、`backend=ghidra`，至少一个二进制有 `functions`；
+- 报告第 14 节对 `QUERY_STRING → system` 等候选显示 2 层调用链；
+- `local_validation.json` 在 x86_64 本机为 `loader=native`、`load_ok=true`；
+- 找不到 Ghidra 时 `decompile.json` 为 `degraded` + fallback，报告第 21 节说明原因，不阻断运行。
+
+DIR-825 这类 MIPS 固件需要 rootfs 自带 `bin/busybox` + `qemu-mips-static`；Ghidra 会对 top-N
+中的 httpd 等二进制导出 callgraph，报告第 21 节会写明哪些架构仍无链、哪些只是加载检查。
 
 ## 6. 打开真实外部工具
 

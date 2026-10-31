@@ -28,7 +28,7 @@ CI 与 Blind Benchmark 不下载镜像、不访问网络、不依赖商业软件
 
 ## 3. 安装与启用
 
-先在 `config/dev.yaml` 打开总开关，再只开启本机具备依赖的工具。不要在 CI 配置中
+先在 `config/dev.yaml` 打开总开关，再开启本机具备依赖的工具。CI 配置中
 打开重型工具。
 
 ```yaml
@@ -77,8 +77,8 @@ python scripts/run_pipeline.py --benchmark-fixtures --depth full --out-dir runs/
 
 | 工具 | 依赖 | 缺失时状态 | 不可声称的能力 |
 |---|---|---|---|
-| SaTC | Docker、Ghidra、angr | skipped | 未跑真实镜像时不能声称完成跨函数实测 |
-| FirmRec | 本地：Python 3.9 + Ghidra 10.2.2 + PostgreSQL；或 Docker 镜像；已知漏洞签名 | skipped/FORCED_DISABLE | 不能计入 Blind 指标；`our` fixture 模式没有漏洞固件时不会伪造签名 |
+| SaTC | Docker、Ghidra、angr | skipped | 未跑真实镜像时结论保持 skipped/degraded |
+| FirmRec | 本地：Python 3.9 + Ghidra 10.2.2 + PostgreSQL；或 Docker 镜像；已知漏洞签名 | skipped/FORCED_DISABLE | Blind 指标单独统计；`our` fixture 模式没有漏洞固件时保持无命中 |
 | KLEE | LLVM bitcode、KLEE/Z3 | skipped/timeout/failed | harness 可达性只验证合成模型；infeasible 不等于真实固件安全 |
 | mini-BOND | 可选 Ghidra、隔离仿真目标、安全门 | skipped/unsafe | 内置限界 HTTP 探针；模拟模式不生成 finding |
 
@@ -91,7 +91,7 @@ python scripts/run_pipeline.py --benchmark-fixtures --depth full --out-dir runs/
 - FirmRec 的 `repo_dir` 必须位于 `allowed_paths` 内（推荐 `./vendor/FirmRec`），
   外部路径需显式加入 `config/safety.yaml`；
 - BOND 目标只允许仿真与私有网段，且四道安全门全部通过；
-- 禁止真机、公网、反弹 shell、持久化、下载执行和破坏性命令；
+- 验证环境限定为仿真实例、私有网段和无害探针（反弹 shell、持久化、下载执行与破坏性命令由安全策略拦截）；
 - FirmHound 侧的 LLM 调用走项目运行时；FirmRec 上游如果启用 LLM，使用其自身
   `config.yaml` 的 `llm_key/llm_url/llm_model`，不经过本项目运行时；
 - 只有 `poc_sanitized=true` 的 marker/crash 证据可确认候选。

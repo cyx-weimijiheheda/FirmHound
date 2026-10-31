@@ -45,6 +45,9 @@ _DISPATCH = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
     parser = argparse.ArgumentParser(
         description="Run an external analyzer against a run directory."
     )

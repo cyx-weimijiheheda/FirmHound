@@ -76,6 +76,6 @@ tags: [agent, evidence, budget, m15, safety]
 
 - 默认不启用时阶段列表与报告行为不变；`--agent` 才在 RANK 后插入 `AGENT_LOOP`。
 - `agent_trace.json` 通过 Schema 校验，且不包含原始模型文本或固件内容。
-- 任何 Agent 动作都不能改变 `conclusion_category` / `status` / `risk_level`。
+- Agent 动作只写事实字段；`conclusion_category` / `status` / `risk_level` 由反证验证阶段产生。
 - Blind Run 不产生 Agent 阶段；`--agent --blind` 报告明确写强制禁用。
 - 模型失败、预算耗尽、缺工具时均能降级到规则路径并留下 limitation。

@@ -8,14 +8,14 @@ FirmHound（固件猎犬）——IoT 固件漏洞挖掘自动化流水线：`解
 ```bash
 make dev                         # 建 .venv + 装依赖 + editable 安装
 make doctor                      # 环境自检
-make test                        # 单元测试（473 passed / 1 skipped 为当前基线）
+make test                        # 单元测试（482 passed / 1 skipped 为当前基线）
 make lint                        # ruff（版本按 requirements.txt）
 
 fsa analyze tmp/unpacked/x/squashfs-root --input-type rootfs \
   --authorization-holder "设备所有者" --depth standard --run-id hunt1
 ```
 
-- 只支持 **Linux 原生**；不要加 Windows/WSL 兼容代码。
+- 运行与测试目标为 **Linux 原生**（glibc / musl）；功能实现和验证都围绕这一目标。
 - Python 3.11–3.13；3.14 暂不支持（PyO3 依赖要求 ≤ 3.13）。
 - `--depth`：`quick`（10 阶段）/ `standard`（主轨 11 阶段）/ `full`（含四个外部分析器，16 阶段）。
 - `--agent` 可选插入 `AGENT_LOOP`（RANK 后、VERIFY 前）；默认关闭，Blind 强制禁用。
@@ -36,7 +36,7 @@ fsa analyze tmp/unpacked/x/squashfs-root --input-type rootfs \
 | 工具注册（YAML → 动态调用） | `tools/registry/*.yaml` + `fsa/runtime/tool_registry.py` |
 | 解包策略、magic carving | `tools/firmware/unpack.py` |
 | 攻击面、认证矩阵 | `tools/web/*` |
-| ELF 画像、危险函数分级 | `tools/binary/*` |
+| ELF 画像、危险函数分级、Ghidra 导出 | `tools/binary/*`（`pipeline.py` / `ghidra_export.py`） |
 | source/sink 规则、十维评分、误报过滤 | `tools/analysis/*` |
 | 候选生成（阶段入口） | `tools/audit/static.py` |
 | 报告 24 节骨架、证据账本、证据边界、中断快照 | `tools/report/*`（`generate.py` / `grounding.py` / `partial.py`） |
@@ -46,24 +46,23 @@ fsa analyze tmp/unpacked/x/squashfs-root --input-type rootfs \
 运行产物：`runs/<run_id>/{state,evidence,decisions,artifacts}/` + `report.md`。
 证据与决策**一条一个 JSON 文件**，便于单条引用与反证。
 
-## 五条最容易踩的坑
+## 五条关键工程约束
 
-1. **工具必须返回带 `status` 的 dict**。抛异常会被兜底成 `error`，`required` 阶段直接 ABORTED。
-2. **改 Schema 必须同步 `schemas/examples/`**，否则 `fsa doctor`、单测、CI 全红。
-3. **不要绕过 PolicyEngine**：路径必须先 `check_path`，动态验证只允许私网，PoC 出栈前过 `sanitize_poc`。
-4. **不允许编造结论**：缺工具/超时 → `degraded|skipped` + `limitation`，不要补"看起来合理"的结果。
-5. **解析外部工具输出要固定 `LC_ALL=C`**（`run_command(..., env={"LC_ALL": "C"})`）；
+1. **工具返回带 `status` 的 dict**。异常由调用方兜底为 `error`，`required` 阶段进入 ABORTED。
+2. **改 Schema 时同步 `schemas/examples/`**，让 `fsa doctor`、单测和 CI 保持一致。
+3. **所有路径先过 PolicyEngine.check_path**；动态验证限定私网；PoC 出栈前过 `sanitize_poc`。
+4. **结论由证据支撑**：缺工具/超时返回 `degraded|skipped` + `limitation`，报告保留未证实项。
+5. **解析外部工具输出固定 `LC_ALL=C`**（`run_command(..., env={"LC_ALL": "C"})`）；
    中文 locale 下 `readelf` 的字段名会被本地化，曾导致架构识别静默退化成 `unknown`。
 
 ## 提交约定
 
-- 提交前跑 `make lint && make test && make doctor`，三项干净再提交。
-- **commit message 禁止 agent 署名**：不加 `Co-Authored-By: Claude` 等共同作者行，不写
-  `Generated with ...`、`🤖`、工具名或模型名尾注；作者用本机配置的开发者身份，不加 `--author`。
+- 提交前跑 `make lint && make test && make doctor`，三项通过后提交。
+- **commit message 使用本机配置的开发者身份**：正文只写变更摘要，作者信息由 git 配置提供。
 - 提交信息前缀：`feat: / fix: / docs: / refactor: / test:`。
 
 ## 测试约定
 
-- 用 `tests/fixtures/elf_builder.py` 合成 ELF，不依赖真实固件/容器/Ghidra。
-- 新增分析逻辑：纯函数放 `tools/`，配 `tests/unit/test_*.py`；阶段入口只做 IO 与编排。
-- 集成测试在 `tests/integration/`，缺宿主工具时自动 skip，不要为了让它跑而放松断言。
+- 测试使用 `tests/fixtures/elf_builder.py` 合成 ELF，保持对真实固件/容器/Ghidra 的独立。
+- 新增分析逻辑：纯函数放 `tools/`，配 `tests/unit/test_*.py`；阶段入口负责 IO 与编排。
+- 集成测试放 `tests/integration/`，缺宿主工具时自动 skip，断言保持严格。

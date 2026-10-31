@@ -14,7 +14,7 @@ tags: [external, firmrec, recurrence, ccs24, m-external]
 
 用 FirmRec 从**已知漏洞的利用过程语义签名**出发，在固件里找它的**复发变体**
 （同厂商跨型号 / 跨版本，经代码复用或定制演变出的同类漏洞）。它补的是主轨
-完全没有的能力：**利用「这个洞在别处出现过」这条信息去扫变体**。
+能力边界：**利用「这个洞在别处出现过」这条信息去扫变体**。
 
 **关键定位（特殊性）**：FirmRec **不进主链**。它要求已知漏洞签名，与系统「零 CVE
 先验、不泄露 Ground Truth」的核心前提直接冲突。因此它是本项目**唯一需要防污染**
@@ -102,11 +102,11 @@ external:
     vuln_firmware_dir: ""         # source=our 的漏洞固件
     signature_db: ./benchmarks/CVEs
     vuln_info_source: our         # our | official
-    mode: signature_only          # 盲跑禁止
+    mode: signature_only          # 盲跑时保持关闭
     timeout_s: 7200
 ```
 
-**运行策略**：不要在 Blind Benchmark 开 FirmRec。只在「已经掌握某个 CVE，扫同厂商
+**运行策略**：Blind Benchmark 中保持 FirmRec 关闭；在「已经掌握某个 CVE，扫同厂商
 变体」的明确场景开启，且其结论单列、不计入零先验指标。
 
 ## 6. 验收与降级（八档不 abort）
@@ -147,7 +147,7 @@ external:
 
 | 坑 | 症状 | 处理 |
 |---|---|---|
-| `repo_dir:path_whitelist` | 本地 checkout 被安全策略拒绝 | 直接 clone 到 `./vendor/FirmRec`（不要用符号链接），或把绝对路径加入 `config/safety.yaml` |
+| `repo_dir:path_whitelist` | 本地 checkout 被安全策略拒绝 | 直接 clone 到 `./vendor/FirmRec`（使用真实目录；符号链接会解析到白名单外），或把绝对路径加入 `config/safety.yaml` |
 | Python 版本不对 | angr/psycopg2 装不上 | 用 `FIRMREC_PYTHON=python3.9 python3 scripts/dev.py firmrec-deps` 建独立 `.venv-firmrec` |
 | Ghidra/JAR 缺失 | `ghidra_headless` / `firmrec_static_jar` missing | 装 Ghidra 10.2.2，执行 `support/buildGhidraJar` 与 `firmentry/build_jar.sh` |
 | PostgreSQL 起不来 | `psql` 连不上 / peer auth | 启动服务、改 `pg_hba.conf` 为 `md5`、核对 `pg_user/pg_password` |

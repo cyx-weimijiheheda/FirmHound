@@ -81,7 +81,7 @@ FirmRec 只用于复发专项。Blind Run 由代码断言禁用，并在决策�
 在 `RANK` 与 `VERIFY_TOP_K` 之间可选插入一个有界循环：规则先按候选的
 `decisive_missing_fact` 筛出合法动作；模型只在 2–4 个动作里排序/选择一个；动作由
 确定性工具执行，只补齐调用链、startup、imports/strings、auth、证据引用等事实。
-模型不生成工具名、路径、参数或结论，Agent 也不能修改
+模型只在规则筛出的合法动作里排序/选择；工具名、路径、参数和结论由代码产生；Agent 只写事实字段，结论字段由反证验证阶段产生
 `conclusion_category` / `status` / `risk_level`。
 
 默认关闭，`--agent` 或 `agent.enabled=true` 才启用；Blind Run 强制禁用；`standard`
@@ -91,7 +91,7 @@ tier 不联网、不仿真；`dynamic` / `external` 需要显式参数。每次�
 
 ## 4. 定位表述的几种写法
 
-按场景选一句，不要混用。
+按场景选择一句，保持全文一致。
 
 - 简短：把固件分析的每一步落成可复核的证据。
 - 技术：Evidence-first firmware vulnerability agent。
@@ -349,7 +349,7 @@ fsa analyze encrypted.bin --decrypt-profile tenda-be3lpro
 
 ### 优先级
 
-中。很有亮点，但要注意不要写成破解工具。
+中。很有亮点，同时把内容定位成防御性分析工具。
 
 ## 7. 建议优先投入的三个方向
 
@@ -401,7 +401,7 @@ A：这是刻意设计的反证优先机制。静态 source/sink 共现不等于
 
 ### Q4：加密固件没解开算不算失败？
 
-A：算能力边界，不算失败。系统识别出 OpenSSL Salted 加密载荷，保存了加密切片，并明确提示需要密码、密钥或厂商升级工具中的解密逻辑。这说明系统具备固件逆向边界诊断能力，避免把解包失败伪装成无漏洞或假 rootfs。
+A：算能力边界，不算失败。系统识别出 OpenSSL Salted 加密载荷，保存了加密切片，并明确提示需要密码、密钥或厂商升级工具中的解密逻辑。这说明系统具备固件逆向边界诊断能力，解包失败时如实标注限制。
 
 ### Q5：不接大模型还能运行吗？
 

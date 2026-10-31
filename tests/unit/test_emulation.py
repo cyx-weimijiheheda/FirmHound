@@ -132,6 +132,37 @@ def test_l1_load_check_skips_without_qemu(tmp_path, monkeypatch) -> None:
     assert "limitation" in result
 
 
+def test_l1_load_check_uses_native_busybox_on_matching_host(
+    tmp_path, monkeypatch
+) -> None:
+    busybox = tmp_path / "busybox"
+    busybox.write_text("busybox", encoding="utf-8")
+    monkeypatch.setattr("tools.emulation.qemu_user.detect_qemu", lambda arch: None)
+    monkeypatch.setattr(
+        "tools.emulation.qemu_user.platform.machine", lambda: "x86_64"
+    )
+    monkeypatch.setenv("BUSYBOX_BIN", str(busybox))
+
+    def fake_run(command, timeout=30.0):
+        from fsa.utils.proc import RunResult
+
+        return RunResult(
+            command=" ".join(command),
+            returncode=0,
+            stdout="QEMU_OK\n",
+            stderr="",
+            status="success",
+        )
+
+    monkeypatch.setattr("tools.emulation.qemu_user.run_command", fake_run)
+    result = run_l1_load_check(tmp_path, "x86_64")
+
+    assert result["status"] == "success"
+    assert result["loader"] == "native"
+    assert result["load_ok"] is True
+    assert result["busybox"] == str(busybox)
+
+
 def test_qemu_system_validate_private_and_reject_public() -> None:
     assert validate_network(PRIVATE_IP)["private"] is True
     with pytest.raises(ValueError):

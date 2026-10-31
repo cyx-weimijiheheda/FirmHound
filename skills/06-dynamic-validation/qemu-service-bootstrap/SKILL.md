@@ -82,7 +82,7 @@ tags: [dynamic, qemu, local_validation, m7, m8]
 
 ## 安全红线
 
-- 只连接本地或 NAT 内的 QEMU 实例，禁止向公网发送真实攻击流量。
+- 连接本地或 NAT 内的 QEMU 实例；流量限定为无害验证。
 - 命令注入 payload 优先使用 `id`、`hostname`、`sleep` 等无害 side-effect，避免实际 shell 反弹。
 - 溢出验证不发送已知的完整 exploit，仅发送超长字符串触发崩溃。
 

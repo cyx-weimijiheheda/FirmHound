@@ -290,7 +290,11 @@ class Planner:
                         ),
                     },
                 },
-                "DECOMPILE": {"tool": "tools.binary.decompile", "required": False},
+                "DECOMPILE": {
+                    "tool": "tools.binary.decompile",
+                    "required": False,
+                    "args": external_args,
+                },
                 "STATIC_ANALYSIS": {"tool": "tools.audit.static", "required": True},
                 # External track (all required=False).
                 "EXTERNAL_ANALYSIS": {

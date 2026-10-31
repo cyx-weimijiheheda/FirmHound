@@ -1,6 +1,6 @@
 # 盲测迭代记录 — Tenda AC15 & OpenWrt（2026-09-02）
 
-> **已归档**：2026-09-02 的 AC15 盲测迭代记录，代表当时的检出效果，不能当作基线。
+> **已归档**：2026-09-02 的 AC15 盲测迭代记录，代表当时的检出效果；当前基线以最新测试结果为准。
 
 > 用 FirmHound CLI（`python -m fsa.cli analyze`）在**未知真实固件**上做零先验盲测，
 > 顺带发现并修复 CLI 自身缺陷，一代一代迭代。本文记录 v1→v2→v3 的实测数据与改动。
@@ -71,8 +71,8 @@ system 3 / popen 2 / execve 1，均锚定到所属函数（如 doSystemCmd 一�
 | unmapped 的 open/fwrite path_traversal | DOWNGRADE | DOWNGRADE（fs sink 无链，backlog） |
 
 即：httpd 的 system/popen/execve/doSystemCmd 候选现在拿到**反汇编证实**的 sub_X→sink 链，
-verifier 判定为"静态证据充分、需动态验证"（走 LOCAL_VALIDATION/BOND），不再是无差别砍分。
-这是"能不能确认漏洞"的分水岭：静态层已到能力上限，剩最后一步是**把 handler 名还原**
+verifier 判定为"静态证据充分、需动态验证"（走 LOCAL_VALIDATION/BOND），改为按证据质量分级。
+这是确认漏洞的能力边界：静态层已到能力上限，剩最后一步是**把 handler 名还原**
 （websFormDefine 在本固件为静态链接、非 PLT 导入，注册表解析暂不可用 → backlog 榜首）。
 
 **过程中又修 2 个自身 bug**：① evidence_store.add 返回 dict，曾误 append 整 dict 进 evidence → RANK 崩

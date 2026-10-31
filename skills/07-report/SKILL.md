@@ -79,7 +79,7 @@ tags: [report, verdict, compliance, m10, redaction]
    - `observation` 级条目不进入评分，只入证据索引。
 
 2. **脱敏渲染（强制）**
-   - 模板中禁止出现可复现攻击参数，一律替换为占位符：`<USER_INPUT>`、`<BENIGN_MARKER>`。
+   - 模板用占位符替换可复现攻击参数：`<USER_INPUT>`、`<BENIGN_MARKER>`。
    - 不出现真实目标 IP、反弹 shell、持久化、下载执行等可武器化内容。
 
 3. **决策摘要硬规则**

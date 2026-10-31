@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from fsa.reporting.evidence_store import EvidenceStore
 from tools.analysis.dataflow import assemble_chain, verify_variable_usage
 from tools.analysis.fp_filter import apply_fp_filters
 from tools.analysis.source_sink_rules import (
@@ -10,6 +13,7 @@ from tools.analysis.source_sink_rules import (
     classify_validation,
     match_binary,
 )
+from tools.audit.static import _enrich_with_chain
 
 # ---------------------------------------------------------------------------
 # source_sink_rules
@@ -26,6 +30,21 @@ def test_classify_source_soap() -> None:
     result = classify_source("NewDownloadURL")
     assert result is not None
     assert result["type"] == "soap_param"
+
+
+def test_match_binary_uses_ghidra_function_signals() -> None:
+    summary = {
+        "imports": [],
+        "strings_summary": {},
+        "functions": [
+            {"name": "system", "strings": []},
+            {"name": "handle_ping", "strings": ["QUERY_STRING", "ping -c 1 %s"]},
+        ],
+    }
+    matches = match_binary(summary)
+
+    assert any(item["function"] == "system" for item in matches["sinks"])
+    assert any(item.get("string") == "QUERY_STRING" for item in matches["sources"])
 
 
 def test_classify_source_unknown() -> None:
@@ -178,3 +197,49 @@ def test_fp_filter_no_rules_for_clean_candidate() -> None:
     result = apply_fp_filters(candidate, attack_surface=surface)
     assert result["excluded"] is False
     assert result["rules"] == []
+
+
+def test_enrich_uses_ghidra_callgraph_when_capstone_unsupported(
+    tmp_path: Path, monkeypatch
+) -> None:
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "sbin").mkdir(parents=True)
+    (rootfs / "sbin" / "httpd").write_bytes(b"\x7fELF")
+    run = tmp_path / "runs" / "run-ghidra-chain"
+    store = EvidenceStore(run)
+    summary = {
+        "path": "sbin/httpd",
+        "functions": [
+            {
+                "name": "handle_ping",
+                "addr": "0x4004f6",
+                "callee_addrs": ["0x4003b0"],
+                "strings": ["QUERY_STRING"],
+            },
+            {
+                "name": "system",
+                "addr": "0x4003b0",
+                "callee_addrs": [],
+                "strings": [],
+            },
+        ],
+    }
+    candidate = {
+        "candidate_id": "cand-ghidra",
+        "sink": {"function": "system", "type": "command_execution"},
+        "source": {"string": "QUERY_STRING", "type": "http_query"},
+        "call_chain": [],
+        "validation": [],
+        "evidence": [],
+        "counterevidence": ["call-chain-not-proven"],
+    }
+    monkeypatch.setattr(
+        "tools.audit.static.recover_chains",
+        lambda *_args, **_kwargs: {"status": "unsupported-arch", "sink_callers": []},
+    )
+
+    _enrich_with_chain(candidate, summary, str(rootfs), store, run.name)
+
+    assert len(candidate["call_chain"]) == 2
+    assert "call-chain-not-proven" not in candidate["counterevidence"]
+    assert candidate["evidence"]

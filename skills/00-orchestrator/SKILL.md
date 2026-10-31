@@ -90,7 +90,7 @@ INIT → BASELINE → UNPACK → SURFACE → BINARY_TRIAGE → DECOMPILE → STA
 6. **反证审查（CandidateVerifier，M7）**
    - 对 Top-K 候选跑 10 问清单，规则推导出裁决动作：`ACCEPT` / `DOWNGRADE` / `REJECT` / `NEED_DYNAMIC`。
    - 结论类别严格五分类：`confirmed-issue` / `high-confidence-candidate` / `false-positive` / `unknown` / `observation`。
-   - 裁决必须引用证据 ID 或反证 ID，禁止无证据裁决；reviewer 标注 rule/model/human。
+   - 裁决引用证据 ID 或反证 ID；reviewer 标注 rule/model/human。
 
 7. **动态验证衔接（Skill 06，full 深度）**
    - 仅 `NEED_DYNAMIC` 或 high-confidence 候选进入。
@@ -107,7 +107,7 @@ INIT → BASELINE → UNPACK → SURFACE → BINARY_TRIAGE → DECOMPILE → STA
 - 编排引擎本身是纯规则的（mock runtime 即可跑通）。
 - 需要 LLM 参与时配置 `config/models.yaml` 的 `openai_compatible` runtime（base_url / model / api_key_env），通过 `fsa.runtime.load_runtime("openai_compatible")` 加载。
 - Budget 硬约束：max_total_tokens / max_tokens_per_stage / max_model_calls_per_stage / max_total_duration_seconds，超限即停，防止失控调用。
-- 在 `AGENT_LOOP` 中，模型只对规则筛出的合法动作排序/选择；不得生成工具名、路径、
+- 在 `AGENT_LOOP` 中，模型只对规则筛出的合法动作排序/选择；工具名、路径、参数和结论由代码产生。
   参数或漏洞结论。模型不可用、JSON 不合法、endpoint 被策略拒绝时一律回退规则选择。
 
 ## 失败降级路径

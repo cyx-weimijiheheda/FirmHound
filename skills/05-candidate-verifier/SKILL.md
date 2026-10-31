@@ -30,12 +30,12 @@ tags: [verifier, m7, evidence-model]
 2. **认证豁免 ≠ 未认证可达**。路由层标记 `public` 需结合 handler 层与启动证据复核。
 3. **过滤函数存在 ≠ 过滤有效**。必须审查过滤逻辑是否可被绕过（黑名单不完整、长度检查后可截断等）。
 4. **源代码存在调用 ≠ 运行时可达**。必须提供从入口到 sink 的调用链或控制流证据。
-5. **配置文件中硬编码 ≠ 用户可控**。常量、编译期宏、默认配置不能视为攻击者输入。
+5. **配置文件中硬编码 ≠ 用户可控**。常量、编译期宏、默认配置按非攻击者输入处理。
 6. **调试/测试函数 ≠ 生产攻击面**。函数名或路径含 `debug`/`test`/`diag` 且无启动证据时降级为 `false-positive`。
 7. **存在 `require_auth` 调用 ≠ 一定需要认证**。需确认该调用在真实路径上被实际执行，而非死代码。
 8. **UPnP/SOAP Action 输入 ≠ 公网可达**。需确认 daemon 监听在 WAN 侧或可通过 LAN 侧横向利用。
-9. **证据不足时只能到 `high-confidence-candidate`/`observation`/`unknown`**，禁止为了报告好看而提升为 `confirmed-issue`。
-10. **`false-positive` 必须有击败性证据**。仅凭"不确定"不能判为误报，必须指出具体推翻点。
+9. **证据不足时保持 `high-confidence-candidate`/`observation`/`unknown`**；`confirmed-issue` 需要完整证据链。
+10. **`false-positive` 必须有击败性证据**。判为误报需要指出具体推翻点。
 11. **同一候选存在矛盾证据时优先降级**。若支持与反对证据势均力敌，结论应为 `unknown` 并标记需动态验证。
 12. **reviewer 必须标注**。规则版标注 `rule`，模型版标注 `model`，人工复核标注 `human`。
 

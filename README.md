@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%20--%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux-2F6FAD)](#环境配置linux)
-[![Tests](https://img.shields.io/badge/tests-473%20passed%20%7C%201%20skipped-1D9E75)]()
+[![Tests](https://img.shields.io/badge/tests-482%20passed%20%7C%201%20skipped-1D9E75)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![CVE Benchmark](https://img.shields.io/badge/benchmark-9%20CVEs-534AB7)](benchmarks/CVEs)
 [![Skills](https://img.shields.io/badge/skills-9%20packs-0F6E56)](skills)
@@ -69,7 +69,7 @@
 | 🔒 动态验证安全门 | 四项硬门（AUTHORIZED / LOCAL_LAB / PRIVATE_NETWORK / BASELINE_READY），仅无害探针 |
 | 🧭 受控自主执行 | `--agent` 开启有界取证循环；模型只排序合法动作，不决定漏洞结论 |
 | 📜 证据链可审计 | EvidenceStore / DecisionStore 全量落盘，报告 24 节骨架，静态结论保留反证与限制 |
-| ✅ 金标准回归 | `benchmarks/CVEs/` 9 个历史 CVE fixture，473 项单元测试持续守护 |
+| ✅ 金标准回归 | `benchmarks/CVEs/` 9 个历史 CVE fixture，482 项单元测试持续守护 |
 
 ## 快速开始（60 秒）
 
@@ -88,7 +88,7 @@ fsa analyze firmware_samples/router.bin --input-type firmware \
   --authorization-holder "设备所有者" --depth full
 ```
 
-> ⚠️ CLI 只接受 `config/safety.yaml` 白名单内的输入路径，且只支持 Linux 原生环境。
+> ⚠️ CLI 的输入路径来自 `config/safety.yaml` 白名单；运行与测试目标为 Linux 原生环境。
 
 ## 系统架构
 
@@ -159,7 +159,7 @@ make doctor    # 检查环境：路径、Schema、运行时、缺失工具
 └── runs/                       ← 分析报告（自动创建）
 ```
 
-> **为什么必须放这里？** 安全策略（`config/safety.yaml`）只允许工具读写白名单目录：`runs/`、`tmp/`、`tests/fixtures/`、`firmware_samples/`。放别处会被 `Policy rejected` 拦截。
+> **为什么放这里？** 安全策略（`config/safety.yaml`）把 `runs/`、`tmp/`、`tests/fixtures/`、`firmware_samples/` 作为工具可读写目录；把固件放进这些目录即可通过路径检查。
 
 ### 第 2 步 · 解包固件
 
@@ -243,7 +243,7 @@ readelf -s <binary> | grep system                       # 确认导入
 **判定规则**：
 - 10 问全过 → `confirmed-issue`（确认漏洞）
 - 有认证/过滤但可绕过 → `high-confidence-candidate`
-- 任一项不满足 → 降级或 `false-positive`，**别硬报**
+- 任一项不满足 → 降级或标为 `false-positive`，报告保留未证实项
 
 ### 第 6 步 · 动态验证（可选）
 
@@ -257,7 +257,7 @@ qemu-mipsel-static -L tmp/squashfs-root tmp/squashfs-root/htdocs/fileaccess.cgi
 **红线（必须遵守）**：
 - 只打自己下载的固件，目标 IP 必须私有网段（`192.168.x.x` / `10.x.x.x`）
 - 只发无害 payload（`id`、`touch /tmp/lab_marker`）
-- **禁止**反弹 shell、持久化、下载执行、真实攻击流量
+- 攻击性流量（反弹 shell、持久化、下载执行）由安全策略拦截
 
 ---
 
@@ -423,13 +423,31 @@ export OPENAI_API_KEY=sk-xxx
 RANK/Verifier → mini-BOND 约束验证。FirmRec 是已知漏洞复发扫描旁路，Blind Run
 会被代码强制关闭，结果独立保存且不计入零先验指标。
 
-四器全部是可选增强：总开关和单工具开关默认关闭；缺镜像、缺 KLEE、超时或解析失败
-都必须返回结构化 `status + limitation`，不能阻断主报告。FirmRec 支持
+四器全部是可选增强：总开关和单工具开关默认关闭；缺镜像、缺 KLEE、超时或解析失败时
+返回结构化 `status + limitation`，主报告继续生成。FirmRec 支持
 `backend: auto | local | docker`，原生安装（不用 Docker）见
 [`docs/guide/firmrec-native.md`](docs/guide/firmrec-native.md)；只有 rootfs 时会打 tar
 兜底并在报告中记 limitation。安装、能力边界和复现状态见 `docs/external/README.md`。
 本地多漏洞回归固件与 native KLEE 示例见
 [`docs/guide/lab-firmware.md`](docs/guide/lab-firmware.md)。
+
+## Ghidra / busybox（可选）
+
+`DECOMPILE` 阶段会自动寻找 `analyzeHeadless`（或本地 `.env` 的 `GHIDRA_HEADLESS`），
+对 triage 排名靠前的二进制导出函数表、调用边和字符串引用，并用 Ghidra callgraph
+补 x86/MIPS 等非 ARM 架构的 source→sink 链；找不到 Ghidra 时退回 pyelftools。
+`LOCAL_VALIDATION` 在目标架构与本机一致且 rootfs 没有 busybox 时，会使用
+`BUSYBOX_BIN` / PATH 里的本机 busybox 做 L1 加载检查；跨架构仍需对应 QEMU。
+
+路径放在本地 `.env`（已 gitignore），仓库配置保持通用：
+
+```bash
+GHIDRA_HEADLESS=/opt/ghidra/support/analyzeHeadless
+BUSYBOX_BIN=/usr/bin/busybox
+```
+
+详见 [docs/guide/install.md](docs/guide/install.md) 和
+[docs/guide/cli-testing.md](docs/guide/cli-testing.md)。
 
 ## 受控自主执行
 
@@ -473,12 +491,12 @@ RANK/Verifier → mini-BOND 约束验证。FirmRec 是已知漏洞复发扫描�
 
 ## 安全与合规
 
-1. **命令黑名单**：`rm -rf`、`curl/wget`、`bash -i` 一律拒绝
-2. **路径白名单**：仅 `runs/`、`tmp/`、`tests/fixtures/`、`firmware_samples/`；`.env`/`secrets/` 禁止读写
-3. **网络隔离**：仅私有网段与 `127.0.0.1`；动态验证目标非私有 → `ABORT_DYNAMIC_VALIDATION`
+1. **命令黑名单**：`rm -rf`、`curl/wget`、`bash -i` 由策略引擎拒绝
+2. **路径白名单**：工具读写 `runs/`、`tmp/`、`tests/fixtures/`、`firmware_samples/`；`.env`/`secrets/` 保持在读写范围之外
+3. **网络隔离**：流量限定在私有网段与 `127.0.0.1`；非私有的动态验证目标触发 `ABORT_DYNAMIC_VALIDATION`
 4. **动态验证四门**：`AUTHORIZED && LOCAL_LAB && PRIVATE_NETWORK && BASELINE_READY`
-5. **非武器化探针**：只允许 `touch/echo/id/uname`；反弹 shell / 持久化 / 下载执行一律拒绝
-6. **报告合规 8 项**：原 7 项 + 外部 PoC 必须 `poc_sanitized=true`
+5. **非武器化探针**：payload 限定为 `touch/echo/id/uname`；反弹 shell / 持久化 / 下载执行由策略拒绝
+6. **报告合规 8 项**：原 7 项 + 外部 PoC 满足 `poc_sanitized=true`
 
 ## 测试
 
@@ -494,8 +512,8 @@ make lint      # ruff 全绿
 
 ## 常见问题（FAQ）
 
-**Q1：为什么只支持 Linux？**
-解包（binwalk/sasquatch）与动态验证（QEMU）本身就是 Linux 工具链；移除 Windows/WSL 适配层后，代码里不再有路径翻译与 `.bat` 壳，行为更可预测。Windows 用户可用容器或远程 Linux 主机。
+**Q1：为什么以 Linux 为运行目标？**
+解包（binwalk/sasquatch）与动态验证（QEMU）属于 Linux 工具链；代码直接面向 Linux 路径与进程模型，行为更可预测。Windows 用户可通过容器或远程 Linux 主机运行。
 
 **Q2：解包时遇到打不开的符号链接？**
 真实固件 rootfs 含指向 `/dev/null` 的悬空链接。CLI 已做符号链接容错（`fsa/utils/traverse.py`），直接分析即可，无需手动清理。

@@ -219,7 +219,7 @@ python scripts/run_external.py --tool klee --run-dir runs/r7000_full
 
 **安装**
 ```bash
-# 仿真目标（二选一，必须仿真，禁止真机）
+# 仿真目标（二选一，使用仿真环境进行验证）
 #  轻量：qemu-user
 #  完整：FirmAE（私有网段起固件）
 # 可选：安装 Ghidra，并确保 analyzeHeadless/ghidra_headless 在 PATH 中

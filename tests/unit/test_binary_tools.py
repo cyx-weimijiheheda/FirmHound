@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "fixtures"))
 
 from elf_builder import build_elf64, write_elf64  # noqa: E402
 
-from fsa.utils.jsonio import load_json, save_json
+from fsa.utils.jsonio import load_json, save_json, save_yaml
 from tools.binary.danger_scan import scan_dangerous_functions, scan_imports
 from tools.binary.elf_triage import triage_elf
 from tools.binary.pipeline import execute_decompile
@@ -170,5 +170,87 @@ def test_execute_decompile_persists_its_limitation(tmp_path: Path) -> None:
     assert result["decompile_status"] == "degraded"
     record = load_json(run / "artifacts" / "decompile.json")
     assert record["fallback"] == "pyelftools"
-    assert "no decompiler" in record["reason"]
+    assert "Ghidra" in record["reason"] or "decompiler" in record["reason"]
     assert record["binary_count"] == 1
+
+
+def test_execute_decompile_enriches_summaries_with_ghidra(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run = tmp_path / "run"
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "usr" / "sbin").mkdir(parents=True)
+    (rootfs / "usr" / "sbin" / "lab_httpd").write_bytes(b"\x7fELF")
+    save_json(
+        run / "artifacts" / "rootfs.json",
+        {"status": "ok", "rootfs_path": str(rootfs)},
+    )
+    save_json(
+        run / "artifacts" / "binary_summaries.json",
+        {
+            "inventory": {},
+            "summaries": [
+                {
+                    "binary_id": "bin-1",
+                    "path": "usr/sbin/lab_httpd",
+                    "triage_score": 1.0,
+                }
+            ],
+        },
+    )
+    safety = tmp_path / "safety.yaml"
+    save_yaml(
+        safety,
+        {
+            "enforce": True,
+            "abort_on_violation": True,
+            "allowed_paths": [str(tmp_path)],
+            "blocked_paths": [],
+            "command_blacklist": [],
+            "network": {"allow_public": False, "allowed_hosts": []},
+            "model": {},
+        },
+    )
+    config = tmp_path / "dev.yaml"
+    save_yaml(
+        config,
+        {
+            "decompile": {
+                "backend": "ghidra",
+                "ghidra_headless": "/fake/analyzeHeadless",
+                "max_binaries": 1,
+                "timeout_s": 10,
+            },
+            "safety": {"config": str(safety)},
+        },
+    )
+    export = {
+        "functions": {
+            "0x1": {"name": "handle_ping", "strings": ["QUERY_STRING"]},
+            "0x2": {"name": "system", "strings": []},
+        },
+        "callgraph": {"0x1": ["0x2"], "0x2": []},
+    }
+    monkeypatch.setattr(
+        "tools.binary.pipeline.resolve_ghidra_headless",
+        lambda _config: "/fake/analyzeHeadless",
+    )
+    monkeypatch.setattr(
+        "tools.binary.pipeline.export_binary",
+        lambda *_args, **_kwargs: {
+            "status": "ok",
+            "available": True,
+            "export": export,
+        },
+    )
+
+    result = execute_decompile(str(run), config_path=str(config))
+
+    assert result["status"] == "ok"
+    payload = load_json(run / "artifacts" / "binary_summaries.json")
+    summary = payload["summaries"][0]
+    assert summary["decompile_status"] == "full"
+    assert summary["functions"]
+    record = load_json(run / "artifacts" / "decompile.json")
+    assert record["backend"] == "ghidra"
+    assert record["analyzed_binaries"] == 1

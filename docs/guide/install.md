@@ -12,7 +12,7 @@ uname -m                 # CPU 架构
 python3 --version        # 需要 3.11–3.13（3.14 暂不支持）
 ```
 
-FirmHound 只依赖 Linux 原生工具链。x86_64 与 aarch64 都可以；glibc 和 musl 都支持，区别只在包名。
+FirmHound 面向 Linux 原生工具链。x86_64 与 aarch64 都可以；glibc 和 musl 都支持，区别只在包名。
 
 > **Python 版本上限**：依赖链中的 PyO3 扩展（如 `pydantic-core`、`rpds-py`）目前要求
 > Python ≤ 3.13，Python 3.14 会在 `pip install` 阶段报
@@ -22,7 +22,7 @@ FirmHound 只依赖 Linux 原生工具链。x86_64 与 aarch64 都可以；glibc
 
 ## 1. 依赖分三档
 
-| 工具 | 用途 | 缺了会怎样 |
+| 工具 | 用途 | 缺失时的降级行为 |
 |---|---|---|
 | `python3` 3.11–3.13 + `venv` | 跑 CLI | 装不上（3.14 暂不支持 PyO3 依赖） |
 | `git`、`gcc`、`make` | 拉代码、编译 sasquatch | 部分解包能力缺失 |
@@ -33,9 +33,21 @@ FirmHound 只依赖 Linux 原生工具链。x86_64 与 aarch64 都可以；glibc
 | `cpio` | initramfs、部分容器格式 | 对应格式解不开 |
 | `7z`（`7zip` / `p7zip`） | ZIP / 7z / 部分 LZMA 容器 | 对应格式解不开 |
 | `qemu-<arch>-static` | 用户态动态验证 | `LOCAL_VALIDATION` 阶段跳过 |
+| `busybox` | 本机架构的 L1 加载自检；或 rootfs 里的目标 busybox | 对应架构的加载检查跳过 |
+| `analyzeHeadless`（Ghidra） | 可选：DECOMPILE 的函数/调用图导出 | DECOMPILE 退回 pyelftools 符号/字符串摘要 |
 | KLEE / BOND / SaTC / FirmRec | 外部分析器 | `EXTERNAL_ANALYSIS` 及以后跳过 |
 
 前四档里任何一项缺失，只会让对应阶段降级，主流程仍然跑完并给出报告。装齐了才谈得上完整覆盖。
+
+Ghidra 路径放在本地 `.env`（已被 gitignore），仓库配置保持通用：
+
+```bash
+GHIDRA_HEADLESS=/opt/ghidra/support/analyzeHeadless
+BUSYBOX_BIN=/usr/bin/busybox
+```
+
+`fsa`/`scripts/run_external.py` 启动时会读取仓库根目录的 `.env`；也可以直接在 shell 里 export。
+`fsa doctor` 会显示 `decompile` 是否找到 Ghidra。
 
 FirmRec 的外部分析器需要额外的一整套工具链（JDK 18 / Ghidra 10.2.2 / Maven / PostgreSQL /
 Python 3.9）。原生安装步骤与版本矩阵见
@@ -57,7 +69,7 @@ sudo apt install -y \
 
 需要注意的点：
 
-- Ubuntu 23.04+ 与 Debian 12+ 启用 PEP 668，`pip install` 会被拒绝。本项目全程用 `.venv`，不受影响，也不要用 `--break-system-packages`。
+- Ubuntu 23.04+ 与 Debian 12+ 启用 PEP 668，`pip install` 会被拒绝。本项目全程用 `.venv`，不受影响；Python 包由 `.venv` 或 `pipx` 管理。
 - Debian 12 仓库里的 binwalk 是 2.3.x，行为与 3.x 有差异；版式识别够用，自动解包建议直接上 `sasquatch`。
 - `qemu-user-static` 一个包带全部架构，不需要按架构单独装。
 
@@ -78,7 +90,7 @@ sudo dnf install -y \
 - Fedora 44+ 的默认 `python3` 可能是 3.14；请安装 `python3.13` 并用
   `make dev PYTHON=python3.13 && make doctor`，否则依赖链里的 PyO3 扩展会报
   `requires Python <= 3.13`。
-- Fedora 40+ 的 `binwalk` 是 3.x（Rust 重写版），扫描更快，但解包仍然调用外部 `sasquatch` / `unsquashfs`，外部工具一个都不能少。
+- Fedora 40+ 的 `binwalk` 是 3.x（Rust 重写版），扫描更快，但解包仍然调用外部 `sasquatch` / `unsquashfs`，外部工具需要全部安装。
 - `squashfs-tools` 4.6.1 起自带 lzma 解码，`unsquashfs -s` 能读出 `Compression lzma` 的超级块。部分厂商镜像的 fragment table 仍会解崩，这类镜像需要 `sasquatch`。
 - Fedora 40 起 `p7zip` 已退役，7z 由 `7zip` 包提供。老版本仍是 `p7zip` + `p7zip-plugins`。
 
@@ -288,7 +300,7 @@ pipx install .
 ```
 
 Python 解释器不在默认路径时用 `make dev PYTHON=python3.13 && make doctor`；请保持在 3.11–3.13
-范围内，不要使用 3.14（PyO3 依赖尚未支持）。
+范围内运行；3.14 尚未满足 PyO3 依赖要求。
 
 ## 5. 验证
 
@@ -312,7 +324,7 @@ done
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `pip` 报 `externally-managed-environment` | PEP 668 | 用 `.venv` 或 `pipx`，不要 `--break-system-packages` |
+| `pip` 报 `externally-managed-environment` | PEP 668 | 用 `.venv` 或 `pipx` 管理包 |
 | `binwalk: command not found` | pipx 装的没进 PATH | `export PATH="$HOME/.local/bin:$PATH"` |
 | `unsquashfs: command not found` | 包名不符 | openSUSE 装 `squashfs`，其余装 `squashfs-tools` |
 | `sasquatch: command not found` | Fedora / RHEL 无包 | §3 源码编译 |

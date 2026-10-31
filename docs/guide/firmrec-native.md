@@ -17,7 +17,7 @@
 | binwalk | 2.3.x（v2，不是 Rust v3） |
 | 其他 | sasquatch、unsquashfs、fakeroot、fakechroot、jefferson（可选） |
 
-FirmRec 的 Python 依赖**不要**装进 FirmHound 的 `.venv`；用独立环境：
+FirmRec 的 Python 依赖装在独立环境：
 
 ```bash
 FIRMREC_PYTHON=python3.9 python3 scripts/dev.py firmrec-deps
@@ -27,7 +27,7 @@ python3.9 -m venv .venv-firmrec
 ```
 
 > FirmHound 项目自己的 `.venv` 仍要求 Python 3.11–3.13（PyO3 依赖上限）；
-> 这里的 3.9 环境只用于 FirmRec 上游分析器，两者不要混用。
+> 这里的 3.9 环境只用于 FirmRec 上游分析器，与 FirmHound 的 `.venv` 分开。
 
 ## 2. 宿主依赖
 
@@ -102,7 +102,7 @@ sudo -u postgres psql -c \
 ```
 
 FirmHound 会为每个 run 使用独立数据库名（`firmrec_<run_id>` 和 `..._vuln`），
-上游 step 2.1 负责 `DROP/CREATE DATABASE`，因此不要提前创建同名库。
+上游 step 2.1 负责 `DROP/CREATE DATABASE`，同名库由上游创建。
 
 若报 `Peer authentication failed`，在 `pg_hba.conf` 中允许本地密码认证：
 
@@ -115,7 +115,7 @@ host    all   all   127.0.0.1/32  md5
 
 ## 6. 配置 FirmHound
 
-步骤 4 已经把 checkout 放到安全白名单内的 `./vendor/FirmRec`。不要用符号链接：
+步骤 4 已经把 checkout 放到安全白名单内的 `./vendor/FirmRec`；使用真实目录，符号链接会被解析到白名单外：
 `PolicyEngine` 会按真实路径解析，指向 `/opt/FirmRec` 的链接仍会被拒绝。
 
 如果必须使用 `/opt/FirmRec`，把它显式加入 `config/safety.yaml` 的
