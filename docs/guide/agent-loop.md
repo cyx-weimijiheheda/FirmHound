@@ -164,7 +164,7 @@ agent:
   记录候选、动作、选择者、证据 ID、预算、停止原因、limitations。
 - `runs/<id>/artifacts/agent_execution.html`：自包含的交互式执行路径图。按真实顺序
   展示候选、规则允许的动作、实际选择、选择来源、结果、证据和待查事实；可按候选
-  筛选并打开步骤详情。虚线灰色节点是合法备选，不代表执行过。页面无外部资源，
+  筛选并打开步骤详情。虚线灰色节点是合法备选；执行记录以实线步骤为准。页面无外部资源，
   可离线打开；分析中每一步完成后会更新。
 - `runs/<id>/artifacts/ranking.json`：enrich 后重新评分排序。
 - `runs/<id>/evidence/ev-*.json`：`stage=AGENT_LOOP` 的确定性事实。

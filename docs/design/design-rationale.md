@@ -375,7 +375,7 @@ fsa analyze encrypted.bin --decrypt-profile tenda-be3lpro
 
 章节结构：
 
-1. 候选不等于结论。
+1. 候选是待验证线索，结论来自反证验证。
 2. Evidence Schema。
 3. Decision Schema。
 4. Counterevidence 机制。
@@ -397,7 +397,7 @@ A：没有。已知 CVE 放在 benchmark 里做回归验证，和零先验分析
 
 ### Q3：为什么有些候选没有直接确认？
 
-A：这是刻意设计的反证优先机制。静态 source/sink 共现不等于漏洞真实可利用。证据不足时系统输出 NEED_DYNAMIC 或 high-confidence-candidate，要求动态验证或人工复核，不制造高危误报。
+A：这是刻意设计的反证优先机制。静态 source/sink 共现需要数据流与动态验证支撑。证据不足时系统输出 NEED_DYNAMIC 或 high-confidence-candidate，要求动态验证或人工复核，不制造高危误报。
 
 ### Q4：加密固件没解开算不算失败？
 

@@ -105,7 +105,7 @@ def test_partial_report_summarizes_existing_artifacts(tmp_path: Path) -> None:
     assert "VERIFY_TOP_K 未完成" in report
     assert "cand-1" in report
     assert "fsa resume run-1" in report
-    assert "不能视为最终结论" in report
+    assert "快照只汇总已有产物" in report
     assert "$(reboot)" not in report
     assert not (run / "report.md").exists()
     assert not (run / "final_verdict.json").exists()

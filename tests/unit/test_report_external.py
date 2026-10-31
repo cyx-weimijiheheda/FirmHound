@@ -231,7 +231,7 @@ def test_report_grounds_evidence_and_discloses_gaps(tmp_path: Path) -> None:
     section15 = report.split("## 15. 反证验证结果", 1)[1].split("## 16.", 1)[0]
     assert "已复核：1/1" in section15
     assert "DOWNGRADE" in section15
-    assert "不代表漏洞不存在" in section15
+    assert "确认或否定漏洞需要后续验证" in section15
     section21 = report.split("## 21. 限制与待验证事实", 1)[1].split("## 22.", 1)[0]
     assert "DECOMPILE" in section21
     assert "mipsel" in section21

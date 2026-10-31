@@ -24,7 +24,7 @@ tags: [dynamic, qemu, local_validation, m7, m8]
 
 - `validation.json`：每条候选的验证结果
   - `result`: `triggered` / `crash` / `no_trigger` / `inconclusive`
-    （`triggered` 只表示无害标记被执行，不代表拿到 shell 或控制流劫持）
+    （`triggered` 表示无害标记被执行；拿到 shell 或控制流劫持需要额外证据）
   - `method`: `qemu_user` / `qemu_system` / `docker` / `manual`
   - `evidence`: 截图、pcap、core、日志路径
   - `notes`: 失败原因或利用条件说明

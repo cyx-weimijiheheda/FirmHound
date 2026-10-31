@@ -288,7 +288,7 @@ def _verdict_table(
     if not verdicts:
         return (
             f"已复核：0；未复核：{candidate_total}。VERIFY_TOP_K 未完成或未产生裁决，"
-            "不能声明确认漏洞。"
+            "需完成反证审查后才能声明确认漏洞。"
         )
     actions: dict[str, int] = {}
     for verdict in verdicts:
@@ -297,7 +297,7 @@ def _verdict_table(
     lines = [
         f"已复核：{reviewed}/{candidate_total}；未复核：{unreviewed}；"
         f"动作分布：{', '.join(f'{key}={value}' for key, value in sorted(actions.items()))}。"
-        "“排除/降级”指本轮证据门槛下不采纳，不代表漏洞不存在。",
+        "“排除/降级”表示本轮证据门槛下不采纳；确认或否定漏洞需要后续验证。",
     ]
     orphans = grounding.get("orphan_verdicts") or []
     if orphans:
@@ -386,7 +386,7 @@ def _rootfs_summary(rootfs: dict[str, Any], grounding: dict[str, Any]) -> str:
 def _limitations_summary(grounding: dict[str, Any]) -> str:
     """List concrete capability gaps behind the evidence boundary."""
     bullets = [
-        "静态 source/sink 共存不等于数据流可达；缺少调用链的候选必须通过反编译或隔离动态验证。",
+        "静态 source/sink 共存需要数据流证据；缺少调用链的候选通过反编译或隔离动态验证补齐。",
     ]
     decompile_status = grounding.get("decompile_status")
     if decompile_status in {"ok", "full"} and grounding.get("decompile_backend") == "ghidra":
@@ -462,7 +462,7 @@ def _limitations_summary(grounding: dict[str, Any]) -> str:
     if grounding.get("model_used"):
         bullets.append("模型仅参与动作选择，不参与漏洞结论、工具参数或路径生成。")
     bullets.append(
-        "accepted=0 或“已降级/已排除”只表示现有证据未闭合，不代表设备不存在漏洞。"
+        "accepted=0 或“已降级/已排除”表示现有证据未闭合；确认或否定设备漏洞需要后续验证。"
     )
     return "\n".join(f"- {item}" for item in bullets)
 

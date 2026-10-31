@@ -19,7 +19,7 @@ KLEE 3.2（LLVM 16 + Z3）做动态符号执行：输入符号化、沿路径收
 三条前提必须先说清：
 
 - KLEE 只吃 LLVM bitcode（`.bc`），固件是 MIPS/ARM 二进制，bitcode 要自己造。
-- `infeasible` 只说明「在当前 harness 模型下不可达」，不等于真实固件不可达。
+- `infeasible` 表示「在当前 harness 模型下不可达」；真实固件可达性需要额外验证。
 - 超时与路径爆炸不改分，只记 `limitation`。
 
 ## 2. 适用场景 / 输入

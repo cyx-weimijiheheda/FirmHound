@@ -190,7 +190,7 @@ def execute_partial_report(
         "final_verdict.json 为准。"
         if final
         else "> 本报告只汇总中断时已经落盘的产物。未完成的阶段没有执行，"
-        "**不能视为最终结论，也不能据此确认或否定漏洞**。"
+        "**快照只汇总已有产物，最终结论以完整报告为准**。"
     )
     lines: list[str] = [
         f"# {title} — {run.name}",
@@ -263,7 +263,7 @@ def execute_partial_report(
         lines.extend(
             [
                 "verdict.json 尚未生成：**VERIFY_TOP_K 未完成**，"
-                "上述候选均未经过最终反证审查，不能声明为确认漏洞。",
+                "上述候选需经过最终反证审查后才能声明为确认漏洞。",
                 "",
             ]
         )
@@ -356,7 +356,7 @@ def execute_partial_report(
         "本快照是运行完成后的摘要；最终结论以 report.md / final_verdict.json 为准。"
         if final
         else "本快照不是最终报告。它只汇总中断时已有的候选、证据和 Agent 轨迹；"
-        "未完成的阶段没有执行，不能据此确认或否定漏洞。完成 fsa resume 后，"
+        "未完成的阶段没有执行；完成 fsa resume 后，"
         "以最终 report.md / final_verdict.json 为准。"
     )
     lines.extend(

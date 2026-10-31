@@ -81,7 +81,7 @@ fsa analyze <FIRMWARE_BIN_OR_CHK> \
   KLEE/BOND 在后续阶段写出的 `klee.json` / `bond.json` 也会合并计入，不显示为 0
 - 报告第 14 节列出 Top 候选的二进制/入口、Source→Sink、调用链/认证/证据/裁决；
   第 15 节列出 reviewed/unreviewed 覆盖与排除理由；第 21 节写明反编译 fallback、
-  架构与调用链能力、候选可追溯性，以及 accepted=0 不等于无漏洞
+  架构与调用链能力、候选可追溯性，以及 accepted=0 的证据边界
 
 实时进度的可验证行为：
 

@@ -79,7 +79,7 @@ python scripts/run_pipeline.py --benchmark-fixtures --depth full --out-dir runs/
 |---|---|---|---|
 | SaTC | Docker、Ghidra、angr | skipped | 未跑真实镜像时结论保持 skipped/degraded |
 | FirmRec | 本地：Python 3.9 + Ghidra 10.2.2 + PostgreSQL；或 Docker 镜像；已知漏洞签名 | skipped/FORCED_DISABLE | Blind 指标单独统计；`our` fixture 模式没有漏洞固件时保持无命中 |
-| KLEE | LLVM bitcode、KLEE/Z3 | skipped/timeout/failed | harness 可达性只验证合成模型；infeasible 不等于真实固件安全 |
+| KLEE | LLVM bitcode、KLEE/Z3 | skipped/timeout/failed | harness 可达性验证合成模型；infeasible 表示当前模型不可达，真实固件安全性需要额外验证 |
 | mini-BOND | 可选 Ghidra、隔离仿真目标、安全门 | skipped/unsafe | 内置限界 HTTP 探针；模拟模式不生成 finding |
 
 当前仓库提供完整 Adapter、Parser、fixture、融合与降级测试；真实工具复现数据必须在

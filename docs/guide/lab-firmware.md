@@ -36,7 +36,7 @@ fsa analyze firmware_samples/firmhound-lab-0.1.0/rootfs \
   --run-id lab-rootfs-standard
 ```
 
-预期可见 `system`、`strcpy`、`printf`、`fopen` 和 CGI `eval` 相关候选。它们是测试夹具中的已知事实，不代表真实产品漏洞。
+预期可见 `system`、`strcpy`、`printf`、`fopen` 和 CGI `eval` 相关候选。它们是测试夹具中的已知事实；真实产品漏洞需要另行验证。
 
 ## 原生 KLEE
 

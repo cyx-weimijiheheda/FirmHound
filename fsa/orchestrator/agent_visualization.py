@@ -71,7 +71,7 @@ def render_agent_visualization(trace: dict[str, Any]) -> str:
 </head>
 <body><main class="shell">
 <div class="eyebrow">FirmHound · Agent Trace</div>
-<div class="title-row"><div><h1>自主分析执行路径</h1><p class="subtitle">按真实执行顺序展示候选、规则筛出的合法动作、最终选择、证据变化和停止状态。虚线动作仅表示可选项，不代表已执行。</p></div><div class="run-chip">Run <b id="runId"></b></div></div>
+<div class="title-row"><div><h1>自主分析执行路径</h1><p class="subtitle">按真实执行顺序展示候选、规则筛出的合法动作、最终选择、证据变化和停止状态。虚线动作表示可选项；执行记录以实线步骤为准。</p></div><div class="run-chip">Run <b id="runId"></b></div></div>
 <section class="stats" id="stats"></section>
 <div class="toolbar"><label for="candidateFilter">候选筛选</label><select id="candidateFilter"><option value="">全部候选</option></select><label for="query">搜索</label><input id="query" type="search" placeholder="搜索动作、证据、缺失事实…"></div>
 <div class="legend"><span><i class="dot rule"></i>规则选择</span><span><i class="dot model"></i>模型在合法动作中选择</span><span><i class="dot success"></i>成功 / 新证据</span><span><i class="dot warn"></i>降级 / 尚未解决</span><span><i class="dot fail"></i>失败</span><span><i class="dot alt"></i>未执行的合法备选</span></div>
