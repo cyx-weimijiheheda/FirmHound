@@ -42,6 +42,12 @@ def _make_ac15_like(root: Path) -> None:
         _elf_header() + b"formexeCommand\x00websFormDefine\x00"
     )
     (root / "www" / "goform" / "formexeCommand").write_text("cgi", encoding="utf-8")
+    (root / "www" / "tools_vct.asp").write_text(
+        '<form method="post" action="ping_response.cgi">'
+        '<input id="ping_ipaddr" name="ping_ipaddr">'
+        "</form>",
+        encoding="utf-8",
+    )
     (root / "etc" / "init.d" / "rcS").write_text(
         "#!/bin/sh\n/usr/sbin/httpd -h /www\n", encoding="utf-8"
     )
@@ -86,6 +92,42 @@ def test_ac15_formexe_command(tmp_path: Path) -> None:
     result = build_attack_surface(root, "run-ac15", tmp_path / "runs")
     routes = {s["route"] for s in result["surfaces"]}
     assert "/goform/formexeCommand" in routes
+    ping = next(item for item in result["surfaces"] if item["handler"] == "ping_response.cgi")
+    assert ping["binary"] == "usr/sbin/httpd"
+    assert ping["route"] == "/ping_response.cgi"
+    assert ping["page"] == "/tools_vct.asp"
+    assert "ping_ipaddr" in ping["param_names"]
+    assert ping["startup_evidence"]
+    page = next(item for item in result["surfaces"] if item["route"] == "/tools_vct.asp")
+    assert page["binary"] == "usr/sbin/httpd"
+
+
+def _make_dir825_like(root: Path) -> None:
+    """Create a rootfs resembling DIR-825 (rc init, no httpd in scripts)."""
+    (root / "sbin").mkdir(parents=True)
+    (root / "www").mkdir(parents=True)
+    (root / "etc" / "rc.d").mkdir(parents=True)
+    (root / "sbin" / "httpd").write_bytes(_elf_header() + b"ping_response.cgi\x00get_cgi\x00")
+    (root / "sbin" / "rc").write_bytes(_elf_header())
+    (root / "www" / "tools_vct.asp").write_text(
+        '<form method="post" action="ping_response.cgi">'
+        '<input type="text" name="ping_ipaddr">'
+        "</form>",
+        encoding="utf-8",
+    )
+    (root / "etc" / "rc.d" / "rcS").write_text("#!/bin/sh\nrc init &\n", encoding="utf-8")
+
+
+def test_dir825_like_binds_cgi_to_httpd(tmp_path: Path) -> None:
+    """DIR-825-like rootfs must bind ping_response.cgi to sbin/httpd."""
+    root = tmp_path / "rootfs"
+    _make_dir825_like(root)
+    result = build_attack_surface(root, "run-dir825", tmp_path / "runs")
+    ping = next(item for item in result["surfaces"] if item["handler"] == "ping_response.cgi")
+    assert ping["binary"] == "sbin/httpd"
+    assert ping["route"] == "/ping_response.cgi"
+    assert ping["page"] == "/tools_vct.asp"
+    assert "ping_ipaddr" in ping["param_names"]
 
 
 def test_hg532e_upnp_upgrade(tmp_path: Path) -> None:

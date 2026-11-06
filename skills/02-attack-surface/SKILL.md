@@ -37,11 +37,12 @@ tags: [attack_surface, web, upnp, cgi, socket, m3]
 3. **Webroot 枚举** (`tools/web/webroot_enum.py`)
    - 枚举 webroot 下 `.cgi/.asp/.aspx/.php/.lua/.json/.xml/.html` 文件
    - 对 `goform/`、`cgi-bin/` 目录无后缀文件也视为端点
+   - 从 ASP/HTML `form action="*.cgi"` 抽出 CGI 路由与 `name=` 字段（跳过 submit 按钮）；页面绑到启动脚本或 `sbin/httpd` 回退路径
    - 按功能分类：auth / config / command / upgrade / status / debug
 
 4. **二进制端点反推** (`tools/web/handler_extract.py`)
    - **GoAhead 系**：提取 `formXxx`/`fromXxx` 函数名 + `websFormDefine` 注册痕迹 → `/goform/<handler>`
-   - **通用 CGI**：`.cgi` 字符串、URL 路由字符串（`^/` 且多层路径）
+   - **通用 CGI**：`.cgi` 字符串写入 `attack_surface.json`（绑定到该 ELF）；URL 路由字符串（`^/` 且多层路径）
    - **环境变量**：`HTTP_*` 字符串暗示 Web handler
    - 输出端点 → 二进制 → handler 三元组
 

@@ -13,7 +13,12 @@ from tools.analysis.source_sink_rules import (
     classify_validation,
     match_binary,
 )
-from tools.audit.static import _enrich_with_chain
+from tools.audit.static import (
+    _enrich_with_chain,
+    _matching_surface,
+    _preferred_source,
+    _surface_from_importers,
+)
 
 # ---------------------------------------------------------------------------
 # source_sink_rules
@@ -79,6 +84,133 @@ def test_match_binary_extracts_sources_and_sinks() -> None:
     assert any(s["type"] == "command_execution" for s in result["sinks"])
     assert any(s["type"] == "http_param" for s in result["sources"])
     assert result["auth_markers"] == ["check_auth"]
+
+
+def test_preferred_source_prefers_cgi_field_over_fgets() -> None:
+    summary = {
+        "path": "sbin/httpd",
+        "strings_summary": {"sample": ["ping_ipaddr", "get_cgi", "parse_special_char"]},
+        "functions": [{"name": "get_ping_app_stat", "strings": ["ping_ipaddr"]}],
+    }
+    surface = {
+        "handler": "ping_response.cgi",
+        "route": "/ping_response.cgi",
+        "page": "/tools_vct.asp",
+        "param_names": ["ping_ipaddr"],
+    }
+    source = _preferred_source(
+        [
+            {"api": "fgets", "type": "socket_buffer", "name": "socket_buffer"},
+            {"api": "get_cgi", "type": "http_param", "name": "http_param"},
+        ],
+        surface,
+        summary,
+    )
+    assert source.get("string") == "ping_ipaddr" or source.get("api") == "get_cgi"
+    assert source["type"] == "http_param"
+
+
+def test_matching_surface_prefers_handler_string_hit() -> None:
+    summary = {
+        "path": "sbin/httpd",
+        "strings_summary": {"sample": ["parse_special_char"]},
+        "functions": [
+            {
+                "name": "FUN_00412e48",
+                "strings": ["ping_ipaddr"],
+                "callees": ["get_cgi", "nvram_set"],
+            },
+            {
+                "name": "get_ping_app_stat",
+                "strings": ['ping -c 1 "%s"'],
+                "callees": ["parse_special_char"],
+            },
+            {"name": "parse_special_char", "strings": []},
+        ],
+    }
+    page = {
+        "surface_id": "surf-page",
+        "binary": "sbin/httpd",
+        "handler": "www/tools_vct.asp",
+        "route": "/tools_vct.asp",
+        "param_names": ["ping_ipaddr", "ping6_ipaddr"],
+        "auth_hint": "preauth",
+    }
+    ping = {
+        "surface_id": "surf-ping",
+        "binary": "sbin/httpd",
+        "handler": "ping_response.cgi",
+        "route": "/ping_response.cgi",
+        "page": "/tools_vct.asp",
+        "param_names": ["ping_ipaddr"],
+        "auth_hint": "preauth",
+    }
+    login = {
+        "surface_id": "surf-login",
+        "binary": "sbin/httpd",
+        "handler": "login.cgi",
+        "route": "/login.cgi",
+        "param_names": ["username"],
+        "auth_hint": "preauth",
+    }
+    save = {
+        "surface_id": "surf-save",
+        "binary": "sbin/httpd",
+        "handler": "save_configuration.cgi",
+        "route": "/save_configuration.cgi",
+        "page": "/tools_system.asp",
+        "param_names": ["save"],
+        "auth_hint": "preauth",
+    }
+    chosen = _matching_surface(
+        summary, [page, login, save, ping], sink={"function": "parse_special_char"}
+    )
+    assert chosen["surface_id"] == "surf-ping"
+
+
+def test_vendor_library_inherits_importer_cgi_surface() -> None:
+    httpd = {
+        "path": "sbin/httpd",
+        "imports": ["parse_special_char", "strcpy"],
+        "functions": [
+            {
+                "name": "get_ping_app_stat",
+                "strings": ['ping -c 1 "%s"'],
+                "callees": ["parse_special_char"],
+            }
+        ],
+    }
+    lib = {
+        "path": "lib/libproject.so",
+        "exports": ["parse_special_char", "check_mpppoe_info"],
+        "imports": ["strcpy"],
+        "sinks": [{"function": "parse_special_char", "type": "memory_safety"}],
+        "sources": [{"api": "parse_special_char", "type": "http_param"}],
+    }
+    ping = {
+        "surface_id": "surf-ping",
+        "binary": "sbin/httpd",
+        "handler": "ping_response.cgi",
+        "route": "/ping_response.cgi",
+        "page": "/tools_vct.asp",
+        "param_names": ["ping_ipaddr"],
+        "auth_hint": "preauth",
+    }
+    login = {
+        "surface_id": "surf-login",
+        "binary": "sbin/httpd",
+        "handler": "login.cgi",
+        "route": "/login.cgi",
+        "param_names": ["username"],
+        "auth_hint": "preauth",
+    }
+    inherited = _surface_from_importers(
+        lib,
+        [login, ping],
+        {"libproject": [httpd]},
+        sink={"function": "strcpy"},
+    )
+    assert inherited["surface_id"] == "surf-ping"
 
 
 def test_match_binary_uses_exported_vendor_helper() -> None:
@@ -258,3 +390,75 @@ def test_enrich_uses_ghidra_callgraph_when_capstone_unsupported(
     assert len(candidate["call_chain"]) == 2
     assert "call-chain-not-proven" not in candidate["counterevidence"]
     assert candidate["evidence"]
+
+
+def test_enrich_prefers_named_caller_matching_cgi_hint(tmp_path: Path, monkeypatch) -> None:
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "sbin").mkdir(parents=True)
+    (rootfs / "sbin" / "httpd").write_bytes(b"\x7fELF")
+    run = tmp_path / "runs" / "run-named-chain"
+    store = EvidenceStore(run)
+    summary = {
+        "path": "sbin/httpd",
+        "functions": [
+            {
+                "name": "get_ping_app_stat",
+                "addr": "0x42aaf8",
+                "callee_addrs": ["0x460710"],
+                "callees": ["parse_special_char"],
+                "strings": ['ping -c 1 "%s"'],
+            },
+            {
+                "name": "parse_special_char",
+                "addr": "0x460710",
+                "callee_addrs": [],
+                "strings": [],
+            },
+        ],
+    }
+    candidate = {
+        "candidate_id": "cand-ping",
+        "sink": {"function": "parse_special_char", "type": "memory_safety"},
+        "source": {"string": "ping_ipaddr", "type": "http_param"},
+        "entry": {
+            "route": "/ping_response.cgi",
+            "handler": "ping_response.cgi",
+            "page": "/tools_vct.asp",
+            "params": ["ping_ipaddr"],
+        },
+        "call_chain": [],
+        "validation": [],
+        "evidence": [],
+        "counterevidence": ["call-chain-not-proven"],
+    }
+    monkeypatch.setattr(
+        "tools.audit.static.recover_chains",
+        lambda *_args, **_kwargs: {
+            "status": "ok",
+            "sink_callers": [
+                {
+                    "func_name": None,
+                    "func_addr": 0x411CA4,
+                    "sink": "parse_special_char",
+                    "sink_addr": None,
+                    "call_addr": 0x412124,
+                    "same_func_source": True,
+                },
+                {
+                    "func_name": "get_ping_app_stat",
+                    "func_addr": 0x42AAF8,
+                    "sink": "parse_special_char",
+                    "sink_addr": None,
+                    "call_addr": 0x42AB44,
+                    "same_func_source": True,
+                },
+            ],
+        },
+    )
+
+    _enrich_with_chain(candidate, summary, str(rootfs), store, run.name)
+
+    assert candidate["call_chain"][0]["func"] == "get_ping_app_stat"
+    assert candidate["call_chain"][1]["func"] == "parse_special_char"
+    assert candidate["call_chain"][1]["addr"] == "0x42ab44"
+    assert "call-chain-not-proven" not in candidate["counterevidence"]

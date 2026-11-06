@@ -63,6 +63,10 @@ Entry → Source → Transform → Validation → Authorization → Sink
 2. **按攻击面路由**
    - 统计每个 surface 的 `input_sources`，命中哪个子技能的覆盖范围就把该 surface 分派过去。
    - 一个 surface 可同时进入两个子技能（长 header 既可能是溢出，也可能是注入）。
+   - CGI/ASP 必须绑到 httpd 类二进制；同一 ELF 多条 surface 时，优先 handler/表单字段出现在函数字符串里的那条。
+   - source 优先 CGI 字段名 / `get_cgi` / `websGetVar`，不要被 `fgets` 抢先。
+   - 调用链优先与 CGI/字段 token 重叠的命名调用者（DIR-825：`get_ping_app_stat` → `parse_special_char`）。
+   - 厂商 helper `.so`（如 `libproject.so`）没有自己的 web 面时，继承导入方二进制上匹配辅助符号的 CGI 面。
 
 3. **收集子技能候选**
    - 两个子技能各自产出候选列表，字段必须满足 `candidate.schema.json`。

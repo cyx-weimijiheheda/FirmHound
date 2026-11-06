@@ -31,6 +31,7 @@ docs/
 | 接入/维护某个外部工具 | `skills/08-external-analyzers/<tool>/SKILL.md` | 目标 → 输入输出 → 执行流程 → 命令 → 验收降级 → 踩坑表 |
 | 查某个设计为什么这么做 | [`design/design-rationale.md`](design/design-rationale.md) | 关键取舍、边界、常见质疑的答法 |
 | 回看某次真实固件运行到底发生了什么 | [`archive/`](archive/) | 带日期的回归与检出记录，**仅作历史证据** |
+| 读 DIR-825 CVE-2025-8949 的查找/分析/工具链 | [`archive/dir825-cve-2025-8949-2026-11-06.md`](archive/dir825-cve-2025-8949-2026-11-06.md) | 页面→httpd→libproject 配对后的静态闭合说明 |
 
 ---
 

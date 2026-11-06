@@ -90,11 +90,32 @@ def test_webroot_enum(tmp_path: Path) -> None:
     (webroot / "goform" / "formexeCommand").write_text("cgi", encoding="utf-8")
     (webroot / "index.html").write_text("html", encoding="utf-8")
     (webroot / "style.css").write_text("css", encoding="utf-8")
+    (webroot / "tools_vct.asp").write_text(
+        '<form method="post" action="ping_response.cgi">'
+        '<input type="text" name="ping_ipaddr" maxlength="63">'
+        '<input name="ping" id="ping" type="submit" value="Ping">'
+        "</form>"
+        '<form method="post" action="ping6_response.cgi">'
+        '<input type="text" name="ping6_ipaddr">'
+        '<input type="submit" name="ping2" id="ping2">'
+        "</form>",
+        encoding="utf-8",
+    )
     result = enumerate_webroot(webroot)
     routes = {e["route"] for e in result["endpoints"]}
     assert "/goform/formexeCommand" in routes
     assert "/index.html" in routes
     assert result["static_asset_count"] == 1
+    ping = next(item for item in result["endpoints"] if item["route"] == "/tools_vct.asp")
+    assert ping["posted_cgi"] == "ping_response.cgi"
+    assert "ping_ipaddr" in ping["form_fields"]
+    actions = [item["action"] for item in ping["posted_forms"]]
+    assert actions == ["ping_response.cgi", "ping6_response.cgi"]
+    ping6 = next(item for item in ping["posted_forms"] if item["action"] == "ping6_response.cgi")
+    assert "ping6_ipaddr" in ping6["fields"]
+    assert "ping_ipaddr" not in ping6["fields"]
+    assert "ping" not in ping["form_fields"]
+    assert "ping2" not in ping6["fields"]
 
 
 def test_find_webroots(tmp_path: Path) -> None:

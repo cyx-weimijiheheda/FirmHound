@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%20--%203.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Platform](https://img.shields.io/badge/Platform-Linux-2F6FAD)](#环境配置linux)
-[![Tests](https://img.shields.io/badge/tests-493%20passed%20%7C%201%20skipped-1D9E75)]()
+[![Tests](https://img.shields.io/badge/tests-528%20passed%20%7C%201%20skipped-1D9E75)]()
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 [![CVE Benchmark](https://img.shields.io/badge/benchmark-9%20CVEs-534AB7)](benchmarks/CVEs)
 [![Skills](https://img.shields.io/badge/skills-9%20packs-0F6E56)](skills)
@@ -69,7 +69,7 @@
 | 🔒 动态验证安全门 | 四项硬门（AUTHORIZED / LOCAL_LAB / PRIVATE_NETWORK / BASELINE_READY），仅无害探针 |
 | 🧭 受控自主执行 | `--agent` 开启有界取证循环；模型只排序合法动作，不决定漏洞结论 |
 | 📜 证据链可审计 | EvidenceStore / DecisionStore 全量落盘，报告 24 节骨架，静态结论保留反证与限制 |
-| ✅ 金标准回归 | `benchmarks/CVEs/` 9 个历史 CVE fixture，493 项单元测试持续守护 |
+| ✅ 金标准回归 | `benchmarks/CVEs/` 9 个历史 CVE fixture，单元测试持续守护 |
 
 ## 快速开始（60 秒）
 
@@ -546,6 +546,7 @@ make lint      # ruff 全绿
 | 查某个工具的方法与踩坑 | `skills/08-external-analyzers/<tool>/SKILL.md`（satc / firmrec / klee / bond） |
 | 查某个设计为什么这么做 | [`docs/design/design-rationale.md`](docs/design/design-rationale.md) |
 | 看历史运行记录 | [`docs/archive/`](docs/archive/)（只读，不代表当前实现） |
+| 读 DIR-825 ping 溢出的查找链路 | [`docs/archive/dir825-cve-2025-8949-2026-11-06.md`](docs/archive/dir825-cve-2025-8949-2026-11-06.md) |
 
 ## 许可证
 

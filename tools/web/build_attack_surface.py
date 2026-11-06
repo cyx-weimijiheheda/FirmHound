@@ -9,12 +9,15 @@ from typing import Any
 from fsa.reporting.store_base import RunLayout
 from fsa.schemas.loader import validate
 from fsa.utils.jsonio import save_json
+from fsa.utils.traverse import iter_rootfs_files
 from tools.filesystem.inventory import inventory_rootfs
 from tools.filesystem.startup_parse import parse_all_startup
 from tools.web.auth_matrix import classify_auth
 from tools.web.handler_extract import extract_handlers
 from tools.web.upnp_parse import find_upnp_xmls, parse_upnp_xml
 from tools.web.webroot_enum import enumerate_webroot, find_webroots
+
+_WEB_DAEMON_NAMES = frozenset({"httpd", "goahead", "lighttpd", "boa", "mini_httpd", "uhttpd"})
 
 
 def _surface_id() -> str:
@@ -46,36 +49,69 @@ def build_attack_surface(
 
     layout = RunLayout(run_id, run_root)
     surfaces: list[dict[str, Any]] = []
+    startup = parse_all_startup(root)
+    web_binary, web_startup = _web_daemon(root, startup)
 
     # Webroot enumeration.
+    seen_routes: set[str] = set()
     for webroot in find_webroots(root):
         enum = enumerate_webroot(webroot)
         for ep in enum["endpoints"]:
-            surface_id = _surface_id()
-            auth = classify_auth(ep["route"], None, None, None)
-            surfaces.append(
-                {
-                    "surface_id": surface_id,
-                    "category": "web" if ep["suffix"] in {".html", ".htm"} else "cgi",
-                    "protocol": "http",
-                    "binary": None,
-                    "route": ep["route"],
-                    "handler": ep["file"],
-                    "input_sources": ["http_param"],
-                    "auth_hint": auth.hint,
-                    "startup_evidence": [],
-                    "reachability_hint": "LAN web admin",
-                    "confidence": auth.confidence,
-                    "evidence_ids": [_evidence_id()],
-                }
+            page_route = str(ep["route"])
+            posted_forms = list(ep.get("posted_forms") or [])
+            if not posted_forms and ep.get("posted_cgi"):
+                posted_forms = [
+                    {
+                        "action": ep.get("posted_cgi"),
+                        "fields": list(ep.get("form_fields") or []),
+                    }
+                ]
+            page_fields = [
+                str(item)
+                for form in posted_forms
+                for item in (form.get("fields") or [])
+                if item
+            ]
+            _append_web_surface(
+                surfaces,
+                seen_routes,
+                root=root,
+                web_binary=web_binary,
+                web_startup=web_startup,
+                route=page_route,
+                handler=str(ep["file"]),
+                suffix=str(ep.get("suffix") or ""),
+                fields=page_fields,
+                page=None,
             )
+            for form in posted_forms:
+                posted = str(form.get("action") or "")
+                if not posted:
+                    continue
+                fields = [str(item) for item in (form.get("fields") or []) if item]
+                _append_web_surface(
+                    surfaces,
+                    seen_routes,
+                    root=root,
+                    web_binary=web_binary,
+                    web_startup=web_startup,
+                    route=f"/{posted}",
+                    handler=posted,
+                    suffix=".cgi",
+                    fields=fields,
+                    page=page_route,
+                )
 
     # Binary handler extraction for all ELF binaries.
     inv = inventory_rootfs(root)
     for elf_rel in inv["elf_paths"]:
         elf_path = root / elf_rel
         extracted = extract_handlers(elf_path)
+        binary_rel = str(elf_path.relative_to(root).as_posix())
         for form in extracted["goahead_forms"]:
+            if form["route"] in seen_routes:
+                continue
+            seen_routes.add(form["route"])
             surface_id = _surface_id()
             auth = classify_auth(form["route"], elf_path, form["handler"], None)
             surfaces.append(
@@ -83,14 +119,41 @@ def build_attack_surface(
                     "surface_id": surface_id,
                     "category": "cgi",
                     "protocol": "http",
-                    "binary": str(elf_path.relative_to(root).as_posix()),
+                    "binary": binary_rel,
                     "route": form["route"],
                     "handler": form["handler"],
                     "input_sources": ["http_param"],
                     "auth_hint": auth.hint,
-                    "startup_evidence": [],
+                    "startup_evidence": (
+                        web_startup if Path(binary_rel).name in _WEB_DAEMON_NAMES else []
+                    ),
                     "reachability_hint": "LAN web admin (handler in binary)",
                     "confidence": 0.85 if extracted["goahead_registered"] else 0.6,
+                    "evidence_ids": [_evidence_id()],
+                }
+            )
+        for cgi in extracted.get("cgi_strings") or []:
+            route = _normalize_cgi_route(str(cgi.get("route") or ""))
+            if not route or route in seen_routes:
+                continue
+            seen_routes.add(route)
+            surface_id = _surface_id()
+            auth = classify_auth(route, elf_path, Path(route).name, None)
+            surfaces.append(
+                {
+                    "surface_id": surface_id,
+                    "category": "cgi",
+                    "protocol": "http",
+                    "binary": binary_rel,
+                    "route": route,
+                    "handler": Path(route).name,
+                    "input_sources": ["http_param"],
+                    "auth_hint": auth.hint,
+                    "startup_evidence": (
+                        web_startup if Path(binary_rel).name in _WEB_DAEMON_NAMES else []
+                    ),
+                    "reachability_hint": "LAN web admin (CGI string in binary)",
+                    "confidence": 0.7,
                     "evidence_ids": [_evidence_id()],
                 }
             )
@@ -120,9 +183,8 @@ def build_attack_surface(
             )
 
     # Startup-driven daemon surfaces.
-    startup = parse_all_startup(root)
     for name, services in startup["grouped"].items():
-        if name in {"httpd", "goahead"}:
+        if name in _WEB_DAEMON_NAMES:
             continue
         if len(services) == 0:
             continue
@@ -153,6 +215,99 @@ def build_attack_surface(
     validate(attack_surface, schema_name="attack_surface")
     save_json(layout.attack_surface, attack_surface)
     return attack_surface
+
+
+def _append_web_surface(
+    surfaces: list[dict[str, Any]],
+    seen_routes: set[str],
+    *,
+    root: Path,
+    web_binary: str | None,
+    web_startup: list[str],
+    route: str,
+    handler: str,
+    suffix: str,
+    fields: list[str],
+    page: str | None,
+) -> None:
+    if route in seen_routes:
+        return
+    seen_routes.add(route)
+    auth = classify_auth(route, root / web_binary if web_binary else None, handler, None)
+    surfaces.append(
+        {
+            "surface_id": _surface_id(),
+            "category": "web" if suffix in {".html", ".htm"} else "cgi",
+            "protocol": "http",
+            "binary": web_binary,
+            "route": route,
+            "handler": handler,
+            "input_sources": ["http_param"],
+            "param_names": fields,
+            "page": page,
+            "auth_hint": auth.hint,
+            "startup_evidence": web_startup,
+            "reachability_hint": "LAN web admin",
+            "confidence": max(auth.confidence, 0.7 if web_binary else auth.confidence),
+            "evidence_ids": [_evidence_id()],
+        }
+    )
+
+
+def _normalize_cgi_route(raw: str) -> str:
+    text = raw.strip().split("?")[0].replace("\\", "/")
+    if not text.endswith(".cgi"):
+        return ""
+    name = text.rsplit("/", 1)[-1]
+    if not name or "*" in name:
+        return ""
+    return "/" + name if not text.startswith("/") else "/" + name
+
+
+def _web_daemon(root: Path, startup: dict[str, Any]) -> tuple[str | None, list[str]]:
+    """Bind webroot CGI pages to the httpd-class binary when one exists.
+
+    Prefer a daemon named in startup scripts. DIR-825-class images start
+    ``rc init`` instead of ``httpd`` directly; fall back to a real httpd ELF
+    under ``sbin/`` / ``usr/sbin/`` so ASP/CGI pages are not left unmapped.
+    """
+    grouped = startup.get("grouped") or {}
+    for name in _WEB_DAEMON_NAMES:
+        services = grouped.get(name) or []
+        if not services:
+            continue
+        evidence = [f"{item['source_file']}:{item['line']}" for item in services[:3]]
+        located = _locate_web_binary(root, name, services[0].get("binary"))
+        if located:
+            return located, evidence
+        return str(services[0].get("binary") or name).lstrip("/"), evidence
+    for name in _WEB_DAEMON_NAMES:
+        located = _locate_web_binary(root, name, None)
+        if located:
+            rc_hits = grouped.get("rc") or grouped.get("rcS") or []
+            evidence = [f"{item['source_file']}:{item['line']}" for item in rc_hits[:3]]
+            return located, evidence
+    return None, []
+
+
+def _locate_web_binary(root: Path, name: str, raw: Any) -> str | None:
+    rels: list[str] = []
+    text = str(raw or "").lstrip("./")
+    if text:
+        rels.append(text)
+        if text.startswith("/"):
+            rels.append(text.lstrip("/"))
+    rels.extend((f"sbin/{name}", f"usr/sbin/{name}", f"bin/{name}"))
+    for rel in rels:
+        if (root / rel).is_file():
+            return Path(rel).as_posix()
+    for path in iter_rootfs_files(root):
+        if path.name == name:
+            try:
+                return str(path.relative_to(root).as_posix())
+            except ValueError:
+                continue
+    return None
 
 
 if __name__ == "__main__":
