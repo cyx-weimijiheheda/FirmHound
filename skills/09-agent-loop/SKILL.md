@@ -38,7 +38,7 @@ tags: [agent, evidence, budget, m15, safety]
 
 | 动作 | tier | 产出事实 | 说明 |
 |---|---|---|---|
-| `recover_call_chain` | standard | `call_chain_reachable` | ARM32 capstone 调用链；不支持架构降级 |
+| `recover_call_chain` | standard | `call_chain_reachable` | ARM32/MIPS capstone 调用链；不支持架构降级 |
 | `cross_check_imports_strings` | standard | `source_sink_cross_checked` | 核对 source/sink 是否真实出现在 imports/strings |
 | `check_handler_startup` | standard | `handler_started` | 优先读 triage 的 startup，缺失才重新解析 |
 | `cross_check_evidence_store` | standard | `contradiction_checked` | 解析悬空 evidence ID、发现 contradicts |

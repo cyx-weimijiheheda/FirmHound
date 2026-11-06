@@ -23,8 +23,9 @@ analysis:
 decompile:
   backend: auto                    # auto | ghidra | fallback
   ghidra_headless: ""              # empty -> GHIDRA_HEADLESS or analyzeHeadless on PATH
-  max_binaries: 5                  # top-N by triage score
-  timeout_s: 600
+  max_binaries: 5                  # top-N by triage score (httpd / vendor .so first)
+  timeout_s: 180                   # per-binary Ghidra cap
+  total_timeout_s: 900             # whole DECOMPILE stage cap; leftover binaries stay fallback
 
 # --------------------------------------------------------------------------- #
 # Bounded agent loop (optional; disabled by default)

@@ -12,6 +12,7 @@ from fsa.utils.jsonio import save_json
 from tools.analysis.source_sink_rules import match_binary
 from tools.audit.audit_constants import CHAIN_SINKS as _CHAIN_SINKS
 from tools.audit.audit_constants import KIND_BY_API as _KIND_BY_API
+from tools.audit.audit_constants import skip_shared_object as _skip_shared_object
 from tools.binary.call_chain import recover_chains
 from tools.binary.ghidra_export import chain_callers
 from tools.pipeline_context import load_artifact, run_path, save_artifact
@@ -37,9 +38,9 @@ def _enrich_with_chain(
 ) -> None:
     """Attach a disassembly-backed call chain when one exists for this sink.
 
-    Uses :mod:`tools.binary.call_chain` (capstone, ARM32). Only upgrades the
-    candidate when a concrete enclosing function calling the sink was found --
-    otherwise the candidate keeps its honest "call-chain-not-proven" state.
+    Uses :mod:`tools.binary.call_chain` (capstone, ARM32 / MIPS). Only upgrades
+    the candidate when a concrete enclosing function calling the sink was found
+    -- otherwise the candidate keeps its honest "call-chain-not-proven" state.
     """
     sink_func = str((candidate.get("sink") or {}).get("function", ""))
     binary_path = str(summary.get("path", ""))
@@ -118,7 +119,7 @@ def _enrich_with_chain(
             evidence_stage = "DECOMPILE"
         else:
             observation = (
-                f"ARM32 disassembly: function sub_{func_addr:x} calls {sink_func} "
+                f"disassembly: function {caller_name} calls {sink_func} "
                 f"at 0x{caller['call_addr']:x} in {binary_path}; "
                 f"same-function source-API read: {caller.get('same_func_source')}"
             )
@@ -212,11 +213,11 @@ def execute_static(run_dir: str) -> dict[str, Any]:
 
     for summary in binary_payload.get("summaries", []):
         summary_path = str(summary.get("path", ""))
-        # Kernel modules (.ko) and shared libraries (.so) are not user-space
-        # entry points: they have no reachable network surface and only pollute
-        # the candidate set (e.g. a .ko exporting _raw_write_lock_bh must never
-        # rank above a web daemon's command-injection sink).
-        if summary_path.endswith(".ko") or ".so" in summary_path:
+        # Kernel modules (.ko) and libc/runtime shared objects are not
+        # user-space entry points. Vendor helper libraries (libproject.so,
+        # libshared.so, ...) *do* host overflow sinks that httpd calls, so they
+        # stay in the candidate set; glibc/uClibc/libgcc still do not.
+        if summary_path.endswith(".ko") or _skip_shared_object(summary_path):
             continue
         matched = match_binary(summary)
         if not matched["sources"] or not matched["sinks"]:

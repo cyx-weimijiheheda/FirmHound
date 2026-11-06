@@ -18,7 +18,16 @@ SOURCE_RULES: list[dict[str, Any]] = [
     {
         "name": "http_param",
         "kind": "http_param",
-        "patterns": ["websGetVar", "$_GET", "$_POST", "arg[", "ngx.var", "request.get"],
+        "patterns": [
+            "websGetVar",
+            "$_GET",
+            "$_POST",
+            "arg[",
+            "ngx.var",
+            "request.get",
+            "get_cgi",
+            "parse_special_char",
+        ],
     },
     {
         "name": "http_header",
@@ -86,10 +95,13 @@ SINK_RULES: dict[str, dict[str, Any]] = {
             "sprintf",
             "vsprintf",
             "gets",
+            "asprintf",
+            "vasprintf",
             "memcpy",
             "strncpy",
             "strncat",
             "sscanf",
+            "parse_special_char",
         ],
     },
     "filesystem": {
@@ -155,6 +167,11 @@ def match_binary(binary_summary: dict[str, Any]) -> dict[str, Any]:
     fields. No ELF file access required, so it is trivially unit-testable.
     """
     imports = binary_summary.get("imports", [])
+    exports = [
+        item["name"] if isinstance(item, dict) else str(item)
+        for item in (binary_summary.get("exports") or [])
+        if item
+    ]
     strings = _flatten_strings(binary_summary)
     functions = binary_summary.get("functions", [])
     auth_functions = set(binary_summary.get("auth_functions", []))
@@ -170,7 +187,7 @@ def match_binary(binary_summary: dict[str, Any]) -> dict[str, Any]:
         seen_sources.add(key)
         sources.append(item)
 
-    for name in imports:
+    for name in (*imports, *exports):
         classified = classify_source(name)
         if classified:
             add_source({"api": name, **classified})
@@ -189,7 +206,7 @@ def match_binary(binary_summary: dict[str, Any]) -> dict[str, Any]:
         seen_sinks.add(key)
         sinks.append(item)
 
-    for name in imports:
+    for name in (*imports, *exports):
         classified = classify_sink(name)
         if classified:
             add_sink(classified)

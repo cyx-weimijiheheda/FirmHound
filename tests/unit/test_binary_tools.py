@@ -254,3 +254,146 @@ def test_execute_decompile_enriches_summaries_with_ghidra(
     record = load_json(run / "artifacts" / "decompile.json")
     assert record["backend"] == "ghidra"
     assert record["analyzed_binaries"] == 1
+
+
+def _safety_and_config(tmp_path: Path, extra_decompile: dict | None = None) -> Path:
+    safety = tmp_path / "safety.yaml"
+    save_yaml(
+        safety,
+        {
+            "enforce": True,
+            "abort_on_violation": True,
+            "allowed_paths": [str(tmp_path)],
+            "blocked_paths": [],
+            "command_blacklist": [],
+            "network": {"allow_public": False, "allowed_hosts": []},
+            "model": {},
+        },
+    )
+    decompile = {
+        "backend": "ghidra",
+        "ghidra_headless": "/fake/analyzeHeadless",
+        "max_binaries": 2,
+        "timeout_s": 10,
+        "total_timeout_s": 30,
+    }
+    if extra_decompile:
+        decompile.update(extra_decompile)
+    config = tmp_path / "dev.yaml"
+    save_yaml(config, {"decompile": decompile, "safety": {"config": str(safety)}})
+    return config
+
+
+def test_execute_decompile_prefers_vendor_so_over_libc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run = tmp_path / "run"
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "sbin").mkdir(parents=True)
+    (rootfs / "lib").mkdir(parents=True)
+    (rootfs / "sbin" / "httpd").write_bytes(b"\x7fELF")
+    (rootfs / "lib" / "libproject.so").write_bytes(b"\x7fELF")
+    (rootfs / "lib" / "libc.so.0").write_bytes(b"\x7fELF")
+    save_json(run / "artifacts" / "rootfs.json", {"status": "ok", "rootfs_path": str(rootfs)})
+    save_json(
+        run / "artifacts" / "binary_summaries.json",
+        {
+            "inventory": {},
+            "summaries": [
+                {
+                    "binary_id": "bin-libc",
+                    "path": "lib/libc.so.0",
+                    "triage_score": 0.9,
+                    "sinks": ["strcpy"],
+                },
+                {
+                    "binary_id": "bin-so",
+                    "path": "lib/libproject.so",
+                    "triage_score": 0.2,
+                    "sinks": ["strcpy"],
+                },
+                {
+                    "binary_id": "bin-httpd",
+                    "path": "sbin/httpd",
+                    "triage_score": 0.2,
+                    "sinks": ["strcpy"],
+                },
+            ],
+        },
+    )
+    config = _safety_and_config(tmp_path, {"max_binaries": 2})
+    seen: list[str] = []
+
+    def _export(binary_path, *_args, **_kwargs):
+        seen.append(Path(binary_path).name)
+        return {
+            "status": "ok",
+            "available": True,
+            "export": {"functions": {}, "callgraph": {}},
+        }
+
+    monkeypatch.setattr(
+        "tools.binary.pipeline.resolve_ghidra_headless",
+        lambda _config: "/fake/analyzeHeadless",
+    )
+    monkeypatch.setattr("tools.binary.pipeline.export_binary", _export)
+
+    result = execute_decompile(str(run), config_path=str(config))
+
+    assert result["status"] == "ok"
+    assert seen == ["httpd", "libproject.so"]
+    record = load_json(run / "artifacts" / "decompile.json")
+    assert "bin-libc" not in record["binaries"]
+
+
+def test_execute_decompile_stops_when_total_timeout_exhausted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    run = tmp_path / "run"
+    rootfs = tmp_path / "rootfs"
+    (rootfs / "sbin").mkdir(parents=True)
+    (rootfs / "sbin" / "httpd").write_bytes(b"\x7fELF")
+    (rootfs / "sbin" / "upnpd").write_bytes(b"\x7fELF")
+    save_json(run / "artifacts" / "rootfs.json", {"status": "ok", "rootfs_path": str(rootfs)})
+    save_json(
+        run / "artifacts" / "binary_summaries.json",
+        {
+            "inventory": {},
+            "summaries": [
+                {"binary_id": "bin-httpd", "path": "sbin/httpd", "triage_score": 1.0},
+                {"binary_id": "bin-upnp", "path": "sbin/upnpd", "triage_score": 0.9},
+            ],
+        },
+    )
+    config = _safety_and_config(tmp_path, {"timeout_s": 5, "total_timeout_s": 2})
+    clock = {"now": 100.0}
+
+    def _monotonic() -> float:
+        return clock["now"]
+
+    def _export(*_args, **_kwargs):
+        clock["now"] += 5
+        return {
+            "status": "ok",
+            "available": True,
+            "export": {"functions": {}, "callgraph": {}},
+        }
+
+    monkeypatch.setattr("tools.binary.pipeline.time.monotonic", _monotonic)
+    monkeypatch.setattr(
+        "tools.binary.pipeline.resolve_ghidra_headless",
+        lambda _config: "/fake/analyzeHeadless",
+    )
+    monkeypatch.setattr("tools.binary.pipeline.export_binary", _export)
+
+    result = execute_decompile(str(run), config_path=str(config))
+
+    record = load_json(run / "artifacts" / "decompile.json")
+    skipped = [
+        item
+        for item in record["binaries"].values()
+        if item.get("status") == "skipped"
+        and "total_timeout_s" in str(item.get("limitation", ""))
+    ]
+    assert skipped
+    assert result["analyzed_binaries"] < 2

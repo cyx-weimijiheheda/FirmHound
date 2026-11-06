@@ -81,6 +81,21 @@ def test_match_binary_extracts_sources_and_sinks() -> None:
     assert result["auth_markers"] == ["check_auth"]
 
 
+def test_match_binary_uses_exported_vendor_helper() -> None:
+    summary = {
+        "imports": ["strcpy"],
+        "exports": ["parse_special_char"],
+        "strings_summary": {},
+        "functions": [],
+        "auth_functions": [],
+        "validation_functions": [],
+    }
+    result = match_binary(summary)
+    assert any(item.get("api") == "parse_special_char" for item in result["sources"])
+    assert any(item["function"] == "strcpy" for item in result["sinks"])
+    assert any(item["function"] == "parse_special_char" for item in result["sinks"])
+
+
 # ---------------------------------------------------------------------------
 # dataflow
 # ---------------------------------------------------------------------------

@@ -37,8 +37,8 @@ def test_grounding_counts_traceability_chain_and_gaps(tmp_path: Path) -> None:
     }
     binaries = {
         "summaries": [
-            {"binary_id": "bin-1", "path": "sbin/httpd", "architecture": "mipsel"},
-            {"binary_id": "bin-2", "path": "sbin/missing", "architecture": "mipsel"},
+            {"binary_id": "bin-1", "path": "sbin/httpd", "architecture": "sparc"},
+            {"binary_id": "bin-2", "path": "sbin/missing", "architecture": "sparc"},
         ]
     }
     ranking = {
@@ -88,8 +88,8 @@ def test_grounding_counts_traceability_chain_and_gaps(tmp_path: Path) -> None:
     assert grounding["candidate_missing_binary"] == 2
     assert grounding["candidates_with_chain"] == 1
     assert grounding["candidates_without_chain"] == 2
-    assert grounding["detected_architectures"] == ["mipsel"]
-    assert grounding["chain_unsupported_architectures"] == ["mipsel"]
+    assert grounding["detected_architectures"] == ["sparc"]
+    assert grounding["chain_unsupported_architectures"] == ["sparc"]
     assert grounding["reviewed_total"] == 2
     assert grounding["orphan_verdicts"] == ["cand-orphan"]
     assert grounding["evidence_referenced"] == 2

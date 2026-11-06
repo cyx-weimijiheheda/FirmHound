@@ -162,8 +162,10 @@ grep -A20 '## 14' runs/lab-ghidra/report.md
 - `local_validation.json` 在 x86_64 本机为 `loader=native`、`load_ok=true`；
 - 找不到 Ghidra 时 `decompile.json` 为 `degraded` + fallback，报告第 21 节说明原因，不阻断运行。
 
-DIR-825 这类 MIPS 固件需要 rootfs 自带 `bin/busybox` + `qemu-mips-static`；Ghidra 会对 top-N
-中的 httpd 等二进制导出 callgraph，报告第 21 节会写明哪些架构仍无链、哪些只是加载检查。
+DIR-825 这类 MIPS 固件需要 rootfs 自带 `bin/busybox` + `qemu-mips-static`。无 Ghidra 时
+capstone 调用链恢复覆盖 ARM32 与 MIPS（`jalr $t9` + GOT）；Ghidra 仍可对 top-N
+（httpd / vendor `.so`，默认每二进制 180s、整阶段 900s）导出 callgraph。报告第 21 节会写明
+哪些架构仍无链、哪些只是加载检查。
 
 ## 6. 打开真实外部工具
 

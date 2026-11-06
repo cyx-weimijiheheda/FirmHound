@@ -184,7 +184,7 @@ def action_recover_call_chain(
     sink = str((candidate.get("sink") or {}).get("function", ""))
     return _outcome(
         "degraded",
-        limitations=[f"no ARM32 caller recovered for sink {sink!r}"],
+        limitations=[f"no ARM32/MIPS caller recovered for sink {sink!r}"],
     )
 
 

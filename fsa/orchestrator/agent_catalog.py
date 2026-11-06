@@ -104,7 +104,7 @@ ACTION_CATALOG: tuple[ActionSpec, ...] = (
         produces=("call_chain_reachable",),
         weight=5,
         cost=1.0,
-        description="Recover an ARM32 caller of the sink with capstone.",
+        description="Recover an ARM32/MIPS caller of the sink with capstone.",
         precondition=_can_recover_chain,
     ),
     ActionSpec(

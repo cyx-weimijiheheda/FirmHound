@@ -81,6 +81,28 @@ def iter_imports(elf: ELFFile) -> Iterator[str]:
                     yield name
 
 
+def iter_exports(elf: ELFFile) -> Iterator[tuple[str, int]]:
+    """Yield ``(name, st_value)`` for defined function symbols.
+
+    Vendor helpers such as ``libproject.so!parse_special_char`` only appear as
+    exports, not imports. Matching them as sinks/sources requires this list.
+    """
+    seen: set[str] = set()
+    for section_name in (".dynsym", ".symtab"):
+        section = elf.get_section_by_name(section_name)
+        if section is None:
+            continue
+        for sym in section.iter_symbols():
+            if sym["st_shndx"] == "SHN_UNDEF":
+                continue
+            if str(sym["st_info"]["type"]) != "STT_FUNC":
+                continue
+            name = sym.name
+            if name and name not in seen:
+                seen.add(name)
+                yield name, int(sym["st_value"])
+
+
 def iter_strings(elf: ELFFile) -> Iterator[str]:
     """Yield printable ASCII strings (>=4 chars) from data-bearing sections."""
     seen: set[str] = set()

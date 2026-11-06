@@ -139,7 +139,7 @@ def test_report_grounds_evidence_and_discloses_gaps(tmp_path: Path) -> None:
         {
             "inventory": {},
             "summaries": [
-                {"binary_id": "bin-1", "path": "sbin/httpd", "architecture": "mipsel"}
+                {"binary_id": "bin-1", "path": "sbin/httpd", "architecture": "sparc"}
             ],
         },
     )
@@ -234,7 +234,7 @@ def test_report_grounds_evidence_and_discloses_gaps(tmp_path: Path) -> None:
     assert "确认或否定漏洞需要后续验证" in section15
     section21 = report.split("## 21. 限制与待验证事实", 1)[1].split("## 22.", 1)[0]
     assert "DECOMPILE" in section21
-    assert "mipsel" in section21
+    assert "sparc" in section21
     assert "调用链恢复仅支持" in section21
     assert "accepted=0" in section21
 

@@ -46,8 +46,9 @@ tags: [binary, decompile, triage, m4, elf]
 4. **深度反编译（仅 Top-N）**
    - 实现：`tools/binary/ghidra_export.py` + `tools/binary/pipeline.py::execute_decompile`。
    - Ghidra `analyzeHeadless` 批处理：导入 → 分析 → 用 `ExportCfgCg.java` 导出函数表/调用边/字符串引用；结果写回 `binary_summaries.json` 的 `functions`，`decompile_status=full`。
-   - Top-N 选择按 triage 分数、攻击面/启动引用、`system/popen` 等危险 sink 和 web 路径加权，避免同分时漏掉 httpd。
-   - 失败或未配置 Ghidra 时走 fallback：objdump 反汇编 + strings + reloc 降级摘要，`decompile_status=fallback`，绝不使整个 run 失败。
+   - Top-N 选择按 triage 分数、攻击面/启动引用、`system/popen/strcpy` 等危险 sink、web 路径和厂商 `.so`（`libproject.so` / `libshared.so`）加权，跳过 libc/libgcc。
+   - 每二进制 `timeout_s`（默认 180s）+ 整阶段 `total_timeout_s`（默认 900s）；超时后剩余二进制保持 fallback，不挂死流水线。
+   - 失败或未配置 Ghidra 时走 fallback：capstone 调用链（ARM32 / MIPS `jalr $t9` + GOT）+ strings + reloc，`decompile_status=fallback`，绝不使整个 run 失败。
    - Ghidra 路径只从本地 `.env` 的 `GHIDRA_HEADLESS`、环境变量或 `decompile.ghidra_headless` 读取，不写入仓库配置。
 
 5. **结构化摘要（summarize）**
@@ -58,7 +59,8 @@ tags: [binary, decompile, triage, m4, elf]
 
 | 场景 | 行为 |
 |---|---|
-| Ghidra 不可用/导入失败 | objdump + strings 降级摘要，`decompile_status=fallback` |
+| Ghidra 不可用/导入失败 | capstone 调用链（ARM32/MIPS）+ strings 降级摘要，`decompile_status=fallback` |
+| DECOMPILE 超时 | 已完成的二进制保留 Ghidra 导出；剩余二进制 fallback，run 继续 |
 | stripped 无函数名 | 基于字符串/xref/调用关系保留候选，不报错退出 |
 | 摘要超 64KB | 按函数 triage 截断并记录 `truncated=true` |
 | 非 ELF 文件 | 跳过，记 `decompile_status=failed`，不影响其他二进制 |

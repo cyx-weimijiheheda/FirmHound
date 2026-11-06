@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +13,8 @@ from fsa.utils.config_files import resolve_config_file
 from fsa.utils.hashing import sha256_file
 from fsa.utils.jsonio import load_yaml, save_json
 from tools.analysis.source_sink_rules import match_binary
-from tools.binary.elf_read import iter_imports, iter_strings, load_elf
+from tools.audit.audit_constants import skip_shared_object
+from tools.binary.elf_read import iter_exports, iter_imports, iter_strings, load_elf
 from tools.binary.elf_triage import triage_elf
 from tools.binary.ghidra_export import apply_export, export_binary, resolve_ghidra_headless
 from tools.binary.secfeatures import security_features
@@ -49,6 +51,7 @@ def execute_triage(
         if elf is None:
             continue
         imports = sorted(iter_imports(elf))
+        export_pairs = list(iter_exports(elf))
         strings = list(iter_strings(elf))[:max_strings_per_binary]
         triage = triage_elf(
             path,
@@ -62,12 +65,17 @@ def execute_triage(
             "architecture": triage["architecture"],
             "security_features": security_features(path),
             "imports": imports,
+            "exports": [name for name, _addr in export_pairs],
             "strings_summary": {
                 "sample": strings,
                 "sample_count": len(strings),
                 "truncated": len(strings) >= max_strings_per_binary,
             },
-            "functions": [],
+            "functions": [
+                {"name": name, "addr": hex(addr)}
+                for name, addr in export_pairs[:200]
+                if addr
+            ],
             "network_functions": triage["network_imports"],
             "sources": [],
             "sinks": [],
@@ -132,11 +140,19 @@ def _decompile_priority(summary: dict[str, Any]) -> float:
         score += 0.3
     if _ref_count(summary.get("startup_refs")):
         score += 0.2
-    if sinks & {"system", "popen", "_system", "doSystemCmd", "alpha_system2"}:
+    if sinks & {"system", "popen", "_system", "doSystemCmd", "alpha_system2", "strcpy", "sprintf"}:
         score += 0.2
     path = str(summary.get("path") or "").lower()
     if any(token in path for token in ("httpd", "web", "cgi", "upnp", "soap")):
         score += 0.5
+    # Vendor helper libraries (libproject.so, libshared.so) host overflow
+    # helpers that httpd calls; keep them ahead of libc/libgcc.
+    name = Path(path).name
+    if name.endswith(".so") or ".so." in name:
+        if any(token in name for token in ("project", "shared", "nvram", "cfm", "rc")):
+            score += 0.35
+        elif any(token in name for token in ("libc", "libgcc", "ld-", "libm.", "libdl")):
+            score -= 0.4
     return score
 
 
@@ -186,7 +202,8 @@ def execute_decompile(
     section = section if isinstance(section, dict) else {}
     backend = str(section.get("backend", "auto")).lower()
     max_binaries = max(1, int(section.get("max_binaries", 5)))
-    timeout_s = float(section.get("timeout_s", 600))
+    timeout_s = float(section.get("timeout_s", 180))
+    total_timeout_s = float(section.get("total_timeout_s", timeout_s * max_binaries))
 
     if backend in {"fallback", "off", "none"}:
         return _fallback_decompile(
@@ -220,7 +237,7 @@ def execute_decompile(
         if isinstance(item, dict)
         and item.get("path")
         and not str(item["path"]).endswith(".ko")
-        and ".so" not in str(item["path"])
+        and not skip_shared_object(str(item["path"]))
     ]
     summaries.sort(key=_decompile_priority, reverse=True)
     selected = summaries[:max_binaries]
@@ -229,8 +246,19 @@ def execute_decompile(
     out_dir.mkdir(parents=True, exist_ok=True)
     results: dict[str, dict[str, Any]] = {}
     analyzed = 0
+    deadline = time.monotonic() + max(0.0, total_timeout_s)
 
     for summary in selected:
+        remaining = deadline - time.monotonic()
+        if remaining <= 1:
+            results[str(summary.get("binary_id") or "unknown")] = {
+                "status": "skipped",
+                "limitation": (
+                    "decompile.total_timeout_s exhausted; "
+                    "remaining binaries kept fallback"
+                ),
+            }
+            continue
         binary_id = str(summary.get("binary_id") or "unknown")
         binary_path = rootfs / str(summary.get("path"))
         try:
@@ -249,7 +277,7 @@ def execute_decompile(
             binary_path,
             out_json,
             ghidra,
-            timeout=timeout_s,
+            timeout=min(timeout_s, remaining),
         )
         if not exported.get("available"):
             results[binary_id] = {
