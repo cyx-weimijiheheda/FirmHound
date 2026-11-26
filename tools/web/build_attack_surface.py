@@ -14,6 +14,7 @@ from tools.filesystem.inventory import inventory_rootfs
 from tools.filesystem.startup_parse import parse_all_startup
 from tools.web.auth_matrix import classify_auth
 from tools.web.handler_extract import extract_handlers
+from tools.web.nginx_lua_routes import parse_nginx_lua_routes
 from tools.web.upnp_parse import find_upnp_xmls, parse_upnp_xml
 from tools.web.webroot_enum import enumerate_webroot, find_webroots
 
@@ -101,6 +102,34 @@ def build_attack_surface(
                     fields=fields,
                     page=page_route,
                 )
+
+    # nginx + ngx_lua routes: the handler is a Lua file, not an ELF.
+    for lua_route in parse_nginx_lua_routes(root):
+        route = str(lua_route["route"]).strip()
+        handler_file = lua_route.get("handler")
+        if not route or not handler_file or route in seen_routes:
+            continue
+        seen_routes.add(route)
+        gates = list(lua_route.get("access_gate") or [])
+        surfaces.append(
+            {
+                "surface_id": _surface_id(),
+                "category": "cgi",
+                "protocol": "http",
+                "binary": handler_file,
+                "route": route,
+                "handler": Path(handler_file).name,
+                "input_sources": ["http_param"],
+                "auth_hint": "unknown" if gates else "preauth",
+                "startup_evidence": web_startup,
+                "reachability_hint": "LAN web admin (nginx lua handler)",
+                "confidence": 0.8,
+                "evidence_ids": [_evidence_id()],
+                "lua_handler": handler_file,
+                "lua_access_gate": gates,
+                "config_source": lua_route.get("config"),
+            }
+        )
 
     # Binary handler extraction for all ELF binaries.
     inv = inventory_rootfs(root)
@@ -217,6 +246,75 @@ def build_attack_surface(
     return attack_surface
 
 
+#: Files a web server just hands to the client. They never execute, so they are
+#: not request-handling entry points.
+_STATIC_ASSET_SUFFIXES = frozenset(
+    {
+        ".html",
+        ".htm",
+        ".shtml",
+        ".css",
+        ".js",
+        ".mjs",
+        ".json",
+        ".map",
+        ".xml",
+        ".txt",
+        ".md",
+        ".csv",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".bmp",
+        ".webp",
+        ".avif",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".otf",
+        ".eot",
+        ".mp3",
+        ".mp4",
+        ".webm",
+        ".pdf",
+        ".gz",
+        ".br",
+    }
+)
+
+#: Documents the browser renders; still an entry point, just not executable.
+_PAGE_SUFFIXES = frozenset({".html", ".htm", ".shtml"})
+
+#: Suffixes that genuinely hand a request to a program.
+_EXECUTABLE_SUFFIXES = frozenset({".cgi", ".fcgi", ".pl", ".php", ".py", ".lua", ".sh", ".asp"})
+
+
+def _surface_category(suffix: str) -> str | None:
+    """Classify a webroot file, or return ``None`` when it is not an entry point.
+
+    Treating everything except ``.html``/``.htm`` as ``cgi`` turned every locale
+    bundle, icon and script under the webroot into a request-handling surface.
+    On GL.iNet MT3000 that produced 336 ``i18n/*.json`` "CGI" surfaces behind a
+    single ``cgi-bin/glc`` entry point, which then dominated binary triage.
+
+    Returns ``cgi`` for things a server executes, ``web`` for pages, and ``None``
+    for assets and data files that are only ever served verbatim.
+    """
+    lowered = suffix.lower()
+    if lowered in _EXECUTABLE_SUFFIXES:
+        return "cgi"
+    if lowered in _PAGE_SUFFIXES:
+        return "web"
+    if lowered in _STATIC_ASSET_SUFFIXES:
+        return None
+    # Unknown suffix: keep the conservative executable reading only when the
+    # webroot entry actually looked like a script.
+    return "cgi" if lowered else None
+
+
 def _append_web_surface(
     surfaces: list[dict[str, Any]],
     seen_routes: set[str],
@@ -230,6 +328,9 @@ def _append_web_surface(
     fields: list[str],
     page: str | None,
 ) -> None:
+    category = _surface_category(suffix)
+    if category is None:
+        return
     if route in seen_routes:
         return
     seen_routes.add(route)
@@ -237,7 +338,7 @@ def _append_web_surface(
     surfaces.append(
         {
             "surface_id": _surface_id(),
-            "category": "web" if suffix in {".html", ".htm"} else "cgi",
+            "category": category,
             "protocol": "http",
             "binary": web_binary,
             "route": route,

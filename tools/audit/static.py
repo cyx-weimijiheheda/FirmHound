@@ -95,6 +95,117 @@ def _resolve_rootfs(run_dir: str) -> str:
     return ""
 
 
+def _enrich_with_lua_chain(
+    candidate: dict[str, Any],
+    summary: dict[str, Any],
+) -> bool:
+    """Attach a source-derived call chain for a Lua handler.
+
+    Lua has no disassembly to recover: the call relation is already in the
+    source, so ``functions[].callees`` *is* the chain. This upgrades a candidate
+    only when a concrete enclosing function actually calls the sink; otherwise it
+    stays at ``call-chain-not-proven``, same contract as the ELF path.
+
+    Returns True when the candidate was upgraded.
+    """
+    if summary.get("language") != "lua":
+        return False
+    sink_func = str((candidate.get("sink") or {}).get("function", ""))
+    if not sink_func:
+        return False
+
+    source = candidate.get("source") or {}
+    source_value = str(source.get("string") or source.get("api") or "")
+    entry = candidate.get("entry") or {}
+    hints = {
+        str(entry.get("handler") or ""),
+        str(entry.get("route") or ""),
+        source_value,
+    } - {""}
+
+    best: dict[str, Any] | None = None
+    best_score = -1
+    for func in summary.get("functions") or []:
+        callees = [str(item) for item in (func.get("callees") or [])]
+        # ``os.execute(...)`` appears as the token ``os.execute``; a bare call to
+        # a local helper shows up as its own name.
+        if sink_func not in callees:
+            continue
+        name = str(func.get("name") or "")
+        score = 0
+        if name and any(hint and hint in name for hint in hints):
+            score += 3
+        if source_value and source_value in callees:
+            score += 2
+        if score > best_score:
+            best = func
+            best_score = score
+
+    if best is None:
+        # A sink can live at module top level: ``oui-rpc.lua`` opens the request
+        # body temp file before any function is defined. That is still a real
+        # call site, but it runs at request time inside nginx, not at load time,
+        # so it is reported as the chunk rather than silently dropped.
+        top_chunks = [
+            func
+            for func in (summary.get("functions") or [])
+            if str(func.get("name") or "").startswith("<chunk")
+            and sink_func in [str(item) for item in (func.get("callees") or [])]
+        ]
+        if not top_chunks:
+            return False
+        best = top_chunks[0]
+        func_addr = str(best.get("addr") or "")
+        func_name = str(best.get("name") or "<chunk>")
+        candidate["call_chain"] = [
+            {
+                "addr": func_addr,
+                "func": func_name,
+                "note": "module-level chunk calls the sink (no enclosing function)",
+            },
+            {
+                "addr": f"{func_addr}:{sink_func}",
+                "func": sink_func,
+                "note": "sink call site",
+            },
+        ]
+        candidate["counterevidence"] = [
+            ce
+            for ce in (candidate.get("counterevidence") or [])
+            if ce != "call-chain-not-proven"
+        ]
+        candidate["decisive_missing_fact"] = (
+            "sink runs in module-level code; confirm it is reached per request"
+        )
+        return True
+
+    func_addr = str(best.get("addr") or "")
+    func_name = str(best.get("name") or "<anonymous>")
+    candidate["call_chain"] = [
+        {
+            "addr": func_addr,
+            "func": func_name,
+            "note": (
+                "module-level chunk calls the sink"
+                if func_name.startswith("<chunk")
+                else "Lua function body calls the sink"
+            ),
+        },
+        {
+            "addr": f"{func_addr}:{sink_func}",
+            "func": sink_func,
+            "note": "sink call site",
+        },
+    ]
+    counter = [
+        ce for ce in (candidate.get("counterevidence") or []) if ce != "call-chain-not-proven"
+    ]
+    candidate["counterevidence"] = counter
+    if source_value:
+        candidate["decisive_missing_fact"] = "runtime input reachability for the sink argument"
+    return True
+
+
 def _enrich_with_chain(
     candidate: dict[str, Any],
     summary: dict[str, Any],
@@ -506,6 +617,12 @@ def _importer_index(summaries: list[dict[str, Any]]) -> dict[str, list[dict[str,
             path = str(summary.get("path", ""))
             if path == library.get("path") or path.endswith(".so") or path.endswith(".ko"):
                 continue
+            # Lua units carry Lua call names in ``imports``, not ELF symbol
+            # imports. They can collide with a Samba/OpenWrt export name by
+            # accident, which made a Lua web handler look like a C library
+            # importer and dragged the library's sinks onto the Lua route.
+            if summary.get("language") == "lua":
+                continue
             imported = {str(item) for item in (summary.get("imports") or [])}
             if imported.intersection(exports):
                 importers.append(summary)
@@ -660,9 +777,12 @@ def execute_static(run_dir: str) -> dict[str, Any]:
                 "status": "analyzing",
             }
             validate(candidate, schema_name="candidate")
-            _enrich_with_chain(
-                candidate, summary, rootfs_dir, evidence_store, run.name
-            )
+            # Lua chains come from the source itself, not from disassembly; try
+            # them first so a Lua candidate never enters the capstone path.
+            if not _enrich_with_lua_chain(candidate, summary):
+                _enrich_with_chain(
+                    candidate, summary, rootfs_dir, evidence_store, run.name
+                )
             candidates.append(candidate)
 
     result = {"run_id": run.name, "candidates": candidates}

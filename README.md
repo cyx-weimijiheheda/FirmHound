@@ -430,16 +430,22 @@ RANK/Verifier → mini-BOND 约束验证。FirmRec 是已知漏洞复发扫描�
 兜底并在报告中记 limitation。安装、能力边界和复现状态见 `docs/external/README.md`。
 本地多漏洞回归固件与 native KLEE 示例见
 [`docs/guide/lab-firmware.md`](docs/guide/lab-firmware.md)。
+SaTC / FirmRec 的 Docker 工作镜像构建与配置见
+[`docs/guide/external-docker.md`](docs/guide/external-docker.md)。
 
 ## Ghidra / busybox（可选）
 
-`DECOMPILE` 阶段会自动寻找 `analyzeHeadless`（或本地 `.env` 的 `GHIDRA_HEADLESS`），
-对 triage 排名靠前的二进制导出函数表、调用边和字符串引用，并用 Ghidra callgraph
+`DECOMPILE` 的 `decompile.backend: auto` 优先复用 `firmhound/firmrec:local` 的 Ghidra，
+没有可用镜像时寻找本机 `analyzeHeadless`（或 `.env` 的 `GHIDRA_HEADLESS`）。
+`backend: docker` 只用容器，缺镜像时降级；`backend: ghidra` 显式选择本机工具。
+它对 triage 排名靠前的二进制导出函数表、调用边和字符串引用，并用 Ghidra callgraph
 补 x86/MIPS 等非 ARM 架构的 source→sink 链；找不到 Ghidra 时退回 pyelftools。
 `LOCAL_VALIDATION` 在目标架构与本机一致且 rootfs 没有 busybox 时，会使用
 `BUSYBOX_BIN` / PATH 里的本机 busybox 做 L1 加载检查；跨架构仍需对应 QEMU。
 
-路径放在本地 `.env`（已 gitignore），仓库配置保持通用：
+容器导出只挂载选中的 ELF（只读）、项目脚本（只读）及产物目录，并关闭网络；
+BOND 共用同一导出逻辑。复发检测数据保存在 `vendor/firmrec-data/vuln_info`，
+独立于可删除的 FirmRec 构建源码。原生模式的路径可放在 `.env`（已 gitignore）：
 
 ```bash
 GHIDRA_HEADLESS=/opt/ghidra/support/analyzeHeadless

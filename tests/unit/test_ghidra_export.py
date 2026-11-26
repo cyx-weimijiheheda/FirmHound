@@ -104,7 +104,64 @@ def test_resolve_ghidra_prefers_env(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("GHIDRA_HEADLESS", str(fake))
     monkeypatch.setattr("tools.binary.ghidra_export.shutil.which", lambda _name: None)
 
-    assert resolve_ghidra_headless({}) == str(fake)
+    assert resolve_ghidra_headless({"decompile": {"backend": "ghidra"}}) == str(fake)
+
+
+def test_auto_prefers_docker_even_when_native_exists(tmp_path: Path, monkeypatch) -> None:
+    fake = tmp_path / "analyzeHeadless"
+    fake.touch()
+    monkeypatch.setenv("GHIDRA_HEADLESS", str(fake))
+    monkeypatch.setattr("tools.binary.ghidra_export.docker_available", lambda: (True, "ok"))
+    monkeypatch.setattr("tools.binary.ghidra_export.docker_image_exists", lambda _image: True)
+    assert resolve_ghidra_headless({}) == "docker://firmhound/firmrec:local"
+
+
+def test_explicit_docker_does_not_silently_use_native(tmp_path: Path, monkeypatch) -> None:
+    fake = tmp_path / "analyzeHeadless"
+    fake.touch()
+    monkeypatch.setenv("GHIDRA_HEADLESS", str(fake))
+    monkeypatch.setattr("tools.binary.ghidra_export.docker_available", lambda: (False, "down"))
+    assert resolve_ghidra_headless({"decompile": {"backend": "docker"}}) is None
+
+
+def test_docker_export_maps_paths_and_isolates_network(tmp_path: Path, monkeypatch) -> None:
+    import json
+
+    from tools.external.backends import BackendResult
+
+    binary = tmp_path / "input" / "httpd"
+    binary.parent.mkdir()
+    binary.write_bytes(b"\x7fELF")
+    output = tmp_path / "output" / "graph.json"
+    monkeypatch.setattr("tools.binary.ghidra_export.PolicyEngine.check_path", lambda *_: None)
+
+    def fake_docker(image, cmd, **kwargs):
+        assert image == "test/ghidra:local"
+        assert kwargs["entrypoint"] == "/root/ghidra/support/analyzeHeadless"
+        assert kwargs["extra_args"] == ["--network", "none"]
+        assert kwargs["mounts"][binary] == "/work/input/httpd:ro"
+        assert kwargs["mounts"][output.parent] == "/work/output"
+        assert cmd[cmd.index("-postScript") + 2] == "/work/output/graph.json"
+        assert not output.exists()  # stale output must not be reused
+        output.write_text(json.dumps(_export()))
+        return BackendResult("ok")
+
+    output.parent.mkdir()
+    output.write_text('{"stale":true}')
+    monkeypatch.setattr("tools.binary.ghidra_export.run_docker", fake_docker)
+    result = export_binary(binary, output, "docker://test/ghidra:local")
+    assert result["available"] is True
+    assert result["export"]["functions"]
+
+
+def test_docker_export_rejects_paths_outside_policy(tmp_path: Path, monkeypatch) -> None:
+    def forbidden_run(*args, **kwargs):
+        raise AssertionError("policy rejection must happen before Docker invocation")
+
+    monkeypatch.setattr("tools.binary.ghidra_export.run_docker", forbidden_run)
+    result = export_binary("/etc/passwd", tmp_path / "out.json", "docker://test/ghidra:local")
+    assert result["available"] is False
+    assert "path_whitelist" in result["limitation"]
 
 
 def test_export_binary_writes_json(tmp_path: Path, monkeypatch) -> None:

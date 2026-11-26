@@ -27,6 +27,48 @@ def _binary_id(relative_path: str) -> str:
     return f"bin-{hashlib.sha256(relative_path.encode()).hexdigest()[:12]}"
 
 
+def _surface_ref_count(surface_rows: list[dict[str, Any]], basename: str) -> int:
+    """Count attack-surface rows that belong to ``basename``."""
+    return sum(
+        1 for surface in surface_rows if Path(str(surface.get("binary") or "")).name == basename
+    )
+
+
+def _select_binaries(
+    rootfs: Path,
+    elf_paths: list[str],
+    startup_grouped: dict[str, Any],
+    surface_rows: list[dict[str, Any]],
+    max_binaries: int,
+) -> list[str]:
+    """Pick which ELFs to summarize, highest signal first.
+
+    Truncating ``elf_paths`` in alphabetical order used to fill the whole budget
+    with ``bin/`` and ``lib/`` files, so vendor daemons and the web server living
+    under ``usr/`` never reached the scorer. Score first, then cut: cheap header
+    triage over the whole inventory, then keep the top ``max_binaries``.
+    """
+    if len(elf_paths) <= max_binaries:
+        return list(elf_paths)
+
+    scored: list[tuple[float, str]] = []
+    for relative in elf_paths:
+        basename = Path(relative).name
+        try:
+            triage = triage_elf(
+                rootfs / relative,
+                startup_refs=len(startup_grouped.get(basename, [])),
+                attack_surface_refs=_surface_ref_count(surface_rows, basename),
+            )
+        except OSError:
+            continue
+        scored.append((float(triage["triage_score"]), relative))
+
+    # Highest score first; ties keep a stable path order so runs are reproducible.
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [relative for _score, relative in scored[:max_binaries]]
+
+
 def execute_triage(
     run_dir: str,
     max_binaries: int = 500,
@@ -40,13 +82,17 @@ def execute_triage(
     surface_rows = surfaces.get("surfaces", []) if isinstance(surfaces, dict) else []
     summaries: list[dict[str, Any]] = []
 
-    for relative in inventory["elf_paths"][:max_binaries]:
+    for relative in _select_binaries(
+        rootfs,
+        inventory["elf_paths"],
+        startup.get("grouped", {}),
+        surface_rows,
+        max_binaries,
+    ):
         path = rootfs / relative
         basename = path.name
         startup_refs = len(startup.get("grouped", {}).get(basename, []))
-        surface_refs = sum(
-            1 for surface in surface_rows if Path(str(surface.get("binary") or "")).name == basename
-        )
+        surface_refs = _surface_ref_count(surface_rows, basename)
         elf = load_elf(path)
         if elf is None:
             continue
@@ -106,13 +152,92 @@ def execute_triage(
         "summaries": summaries,
         "truncated": len(inventory["elf_paths"]) > max_binaries,
     }
+    lua_payload = _summarize_lua(rootfs, startup.get("grouped", {}), surface_rows)
+    payload["lua_summaries"] = lua_payload["summaries"]
+    payload["lua"] = lua_payload["stats"]
+    summaries.extend(lua_payload["summaries"])
     artifact = save_artifact(run_dir, "binary_summaries.json", payload)
     status = "degraded" if payload["truncated"] else "ok"
     return {
         "status": status,
         "binary_count": len(summaries),
         "inventory_elf_count": inventory["elf_count"],
+        "lua_units": lua_payload["stats"]["analyzed"],
         "binary_summaries": str(artifact),
+    }
+
+
+def _summarize_lua(
+    rootfs: Path,
+    startup_grouped: dict[str, Any],
+    surface_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize every Lua unit in the rootfs, with its own budget.
+
+    Lua gets a separate quota instead of competing with ELFs for the 500 slots:
+    on a GL.iNet image the request handling moved into Lua, and letting 937 ELFs
+    win the whole budget made the entire web authorization layer invisible.
+    """
+    from tools.script.lua_static import analyze_lua_file, iter_lua_paths
+
+    summaries: list[dict[str, Any]] = []
+    bytecode = 0
+    unreadable = 0
+    for relative in iter_lua_paths(rootfs):
+        result = analyze_lua_file(rootfs, relative)
+        if result is None:
+            unreadable += 1
+            continue
+        if result.get("status") != "ok":
+            bytecode += 1
+            continue
+        basename = Path(relative).name
+        surface_refs = _surface_ref_count(surface_rows, basename)
+        startup_refs = len(startup_grouped.get(basename, []))
+        summary: dict[str, Any] = {
+            "binary_id": _binary_id(relative),
+            "path": relative,
+            "sha256": sha256_file(rootfs / relative),
+            "architecture": "lua",
+            "security_features": {
+                "nx": False,
+                "canary": False,
+                "pie": False,
+                "relro": "none",
+                "stripped": False,
+            },
+            "imports": result.get("imports", []),
+            "exports": result.get("exports", []),
+            "strings_summary": {"sample": [], "sample_count": 0, "truncated": False},
+            "functions": result.get("functions", []),
+            "network_functions": [],
+            "sources": [],
+            "sinks": [],
+            "auth_functions": [],
+            "validation_functions": [],
+            "triage_score": 0.0,
+            "decompile_status": "full",
+            "triage_reasons": ["lua_source"],
+            "danger": {"total_weight": 0, "critical": False, "hits": []},
+            "startup_refs": startup_refs,
+            "attack_surface_refs": surface_refs,
+            "language": "lua",
+            "modules": result.get("modules", []),
+            "line_count": result.get("line_count", 0),
+        }
+        matches = match_binary(summary)
+        summary["sources"] = sorted({item["type"] for item in matches["sources"]})
+        summary["sinks"] = sorted({item["function"] for item in matches["sinks"]})
+        summary["validation_functions"] = sorted({item["api"] for item in matches["validations"]})
+        summaries.append(summary)
+
+    return {
+        "summaries": summaries,
+        "stats": {
+            "analyzed": len(summaries),
+            "bytecode_skipped": bytecode,
+            "unreadable": unreadable,
+        },
     }
 
 
@@ -217,7 +342,7 @@ def execute_decompile(
         return _fallback_decompile(
             run_dir,
             payload,
-            "Ghidra headless not found (set decompile.ghidra_headless or GHIDRA_HEADLESS); "
+            "Ghidra backend unavailable (build decompile.docker_image or configure native Ghidra); "
             "symbol/string fallback retained",
         )
 

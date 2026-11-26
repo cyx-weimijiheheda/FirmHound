@@ -28,6 +28,21 @@ SOURCE_RULES: list[dict[str, Any]] = [
             "get_cgi",
             "parse_special_char",
         ],
+        # Lua / ngx_lua read request data through explicit API calls rather than
+        # through a C buffer, so they need their own allow-list entries.
+        "exact": [
+            "websGetVar",
+            "ngx.req.get_uri_args",
+            "ngx.req.get_post_args",
+            "ngx.req.read_body",
+            "ngx.req.get_body_data",
+            "ngx.req.get_body_file",
+            "ngx.var.request_body",
+            "ngx.var.uri",
+            "get_cgi",
+            "parse_special_char",
+        ],
+        "prefix_ok": ["ngx.var.arg_", "ngx.var.request_"],
     },
     {
         "name": "http_header",
@@ -39,16 +54,47 @@ SOURCE_RULES: list[dict[str, Any]] = [
             "Content-Length",
             "Authorization",
         ],
+        # ``add_AuthorizationData`` is an LDAP/ASN.1 helper, not a header read.
+        "exact": [
+            "HTTP_COOKIE",
+            "HTTP_USER_AGENT",
+            "HTTP_AUTHORIZATION",
+            "HTTP_HOST",
+            "HTTP_REFERER",
+            "SOAPAction",
+            "Content-Length",
+            "Authorization",
+            "User-Agent",
+            "Cookie",
+            "ngx.req.get_headers",
+            "ngx.var.http_",
+        ],
+        "prefix_ok": ["ngx.var.http_"],
     },
     {
         "name": "http_query",
         "kind": "http_query",
         "patterns": ['getenv("QUERY_STRING")', "QUERY_STRING", "query_string"],
+        # ``ads_dns_query_string_dcs`` is an ADS DNS lookup, not a query string.
+        "exact": [
+            'getenv("QUERY_STRING")',
+            "QUERY_STRING",
+            "query_string",
+            "http.query_string",
+            "ngx.req.get_uri_args",
+        ],
+        "prefix_ok": ["ngx.var.arg_"],
     },
     {
         "name": "http_cookie",
         "kind": "http_cookie",
         "patterns": ["COOKIE", "get_cookie", "cookie"],
+        # ``ndr_pull_vfs_default_durable_cookie`` is an SMB2 durable-handle
+        # parser; the HTTP header environment is the real cookie channel.
+        "exact": ["COOKIE", "HTTP_COOKIE", "cookie", "get_cookie", "set_cookie"],
+        "prefix_ok": ["ngx.var.cookie_"],
+        # No ``_cookie`` suffix: ``ndr_pull_*_durable_cookie`` is an SMB2 handle
+        # parser. A vendor wrapper must name the reader explicitly instead.
     },
     {
         "name": "soap_param",
@@ -59,11 +105,29 @@ SOURCE_RULES: list[dict[str, Any]] = [
         "name": "socket_buffer",
         "kind": "socket_buffer",
         "patterns": ["recv", "recvfrom", "recvmsg", "read(", "fgets", "readline"],
+        # Only libc-level stream reads count. Substring matching classified
+        # ``dcerpc_binding_handle_call_recv`` (an RPC completion callback) and
+        # ``gensec_update_recv`` as socket input, which let 546 Samba library
+        # candidates through the "network source" gate on GL.iNet MT3000 with
+        # zero mapped attack surface. Suffix rules were not enough: ``_recv``
+        # still matches those callbacks, so the allow-list is explicit.
+        # No "reader": it is an ordinary English word and matched arbitrary
+        # description strings inside vendor runtimes.
+        "exact": ["recv", "recvfrom", "recvmsg", "fgets", "readline"],
+        "suffix_ok": ["_fgets"],  # vendor wrappers such as ``x_fgets``
+        "suffix_deny": ["_recv"],  # every ``*_recv`` is an RPC/tevent completion
     },
     {
         "name": "file_upload",
         "kind": "file_upload",
         "patterns": ["multipart/form-data", "upload", "write_file"],
+        # Samba's ``ndr_print_..._UploadPrinterDriverPackage`` and
+        # ``ldb_ldif_write_file`` are NDR printers and LDIF writers, not upload
+        # handlers. Keep the MIME marker and real entry points only.
+        # ``fwrite`` is a write *sink*, not an upload channel; it belongs to the
+        # filesystem sink rules and must not seed candidates on the source side.
+        "exact": ["multipart/form-data", "file_upload", "upload_file", "write_file"],
+        "suffix_ok": ["_upload", "_upload_file"],
     },
     {
         "name": "config_import",
@@ -86,6 +150,12 @@ SINK_RULES: dict[str, dict[str, Any]] = {
             "system", "__system", "popen", "execl", "execlp", "execle", "execv",
             "execvp", "execve", "doSystemCmd", "lxmldbc_system", "alpha_system2",
             "unlink", "sprintf_system",
+            # Lua reaches the shell through these; ``io.popen`` already matched on
+            # the "popen" substring, ``os.execute`` did not match anything.
+            # ``dofile``/``loadstring`` eval attacker-influenced Lua, which is the
+            # same capability, so they share the category rather than inventing
+            # one the risk scorer does not know about.
+            "os.execute", "os.exec", "posix.exec", "os.spawn", "dofile", "loadstring",
         ],
     },
     "memory_safety": {
@@ -125,6 +195,32 @@ VALIDATION_RULES: dict[str, list[str]] = {
 }
 
 
+def _match_source_rule(name: str, rule: dict[str, Any]) -> bool:
+    """Decide whether ``name`` belongs to a source rule.
+
+    Rules that declare ``exact``/``suffix_ok`` opt out of substring matching so
+    that protocol callbacks (``..._call_recv``) are not mistaken for socket
+    reads. ``prefix_ok`` covers parameterised accessors such as
+    ``ngx.var.arg_<name>`` where only the family prefix is stable. Unversioned
+    names are compared after stripping ``@GLIBC_*`` tails.
+    """
+    exact = rule.get("exact")
+    if not exact:
+        return _match(name, rule["patterns"])
+
+    lowered = name.split("@", 1)[0].lower().strip()
+    if lowered.endswith("("):
+        lowered = lowered[:-1]
+    if lowered in {item.lower() for item in exact}:
+        return True
+    deny = tuple(item.lower() for item in rule.get("suffix_deny") or ())
+    if deny and lowered.endswith(deny):
+        return False
+    if any(lowered.startswith(item.lower()) for item in rule.get("prefix_ok") or ()):
+        return True
+    return any(lowered.endswith(item.lower()) for item in rule.get("suffix_ok") or ())
+
+
 def _match(name: str, patterns: list[str]) -> bool:
     lowered = name.lower()
     return any(p.lower() in lowered for p in patterns)
@@ -133,7 +229,7 @@ def _match(name: str, patterns: list[str]) -> bool:
 def classify_source(name: str) -> dict[str, Any] | None:
     """Classify a function/string name as an input source, or ``None``."""
     for rule in SOURCE_RULES:
-        if _match(name, rule["patterns"]):
+        if _match_source_rule(name, rule):
             return {"type": rule["kind"], "name": rule["name"]}
     return None
 

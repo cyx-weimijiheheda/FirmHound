@@ -127,3 +127,79 @@ def test_find_webroots(tmp_path: Path) -> None:
     names = {w.name for w in webroots}
     assert "www" in names
     assert "htdocs" in names
+
+
+def test_static_assets_are_not_request_surfaces() -> None:
+    """Locale bundles and icons must not be counted as CGI entry points.
+
+    Regression: every webroot suffix other than .html/.htm was labelled ``cgi``,
+    so GL.iNet MT3000 reported 336 ``i18n/*.json`` "CGI" surfaces behind the one
+    real ``cgi-bin/glc`` script and that inflated count drove binary triage.
+    """
+    from tools.web.build_attack_surface import _surface_category
+
+    for suffix in (".json", ".js", ".css", ".png", ".svg", ".woff2", ".map", ".gz"):
+        assert _surface_category(suffix) is None, suffix
+
+    for suffix in (".html", ".htm"):
+        assert _surface_category(suffix) == "web", suffix
+
+    for suffix in (".cgi", ".fcgi", ".php", ".pl"):
+        assert _surface_category(suffix) == "cgi", suffix
+
+
+def test_rpc_callbacks_are_not_socket_sources() -> None:
+    """A name containing "recv" is not necessarily a socket read.
+
+    Regression: Samba's ``dcerpc_binding_handle_call_recv`` and
+    ``gensec_update_recv`` matched the ``recv`` substring rule, so 546 library
+    candidates on GL.iNet MT3000 passed the "network source" gate with no mapped
+    attack surface at all.
+    """
+    from tools.analysis.source_sink_rules import classify_source
+
+    for callback in (
+        "dcerpc_binding_handle_call_recv",
+        "gensec_update_recv",
+        "ndr_pull_netr_DsRGetDCNameEx2",
+    ):
+        assert classify_source(callback) is None, callback
+
+    for reader in ("recv", "recvfrom", "recvmsg", "fgets", "readline"):
+        classified = classify_source(reader)
+        assert classified is not None and classified["type"] == "socket_buffer", reader
+
+    # Vendor wrappers around a real read stay classified.
+    assert classify_source("x_fgets")["type"] == "socket_buffer"
+
+
+def test_protocol_parsers_are_not_http_sources() -> None:
+    """Substring rules must not turn protocol helpers into HTTP input channels.
+
+    Every name below matched a substring pattern (``upload``, ``cookie``,
+    ``Authorization``, ``query_string``, ``recv``) while being an NDR printer,
+    SMB2 handle parser, LDAP helper or tevent callback. On GL.iNet MT3000 they
+    produced ~500 library candidates with no reachable entry point.
+    """
+    from tools.analysis.source_sink_rules import classify_source
+
+    for parser in (
+        "dcerpc_winreg_QueryInfoKey_recv",
+        "open_socket_out_recv",
+        "read_smb_recv",
+        "_tstream_npa_accept_existing_recv",
+        "SMB_VFS_FSYNC_RECV",
+        "ndr_print_winspool_AsyncUploadPrinterDriverPackage",
+        "ndr_pull_vfs_default_durable_cookie",
+        "ldb_ldif_write_file",
+        "add_AuthorizationData",
+        "ads_dns_query_string_dcs",
+    ):
+        assert classify_source(parser) is None, parser
+
+    # Real channels keep working.
+    assert classify_source("QUERY_STRING")["type"] == "http_query"
+    assert classify_source("HTTP_COOKIE")["type"] == "http_header"
+    assert classify_source("get_cookie")["type"] == "http_cookie"
+    assert classify_source("multipart/form-data")["type"] == "file_upload"
+    assert classify_source("websGetVar")["type"] == "http_param"

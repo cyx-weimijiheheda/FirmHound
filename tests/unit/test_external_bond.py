@@ -10,7 +10,6 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from fsa.utils.proc import RunResult
 from tools.external.base import AnalysisContext
 from tools.external.bond.mini import ghidra_export
 from tools.external.bond.mini.ghidra_export import export_cfg_cg, identify_entry_points
@@ -321,7 +320,7 @@ def test_builtin_http_transport_observes_real_loopback_marker() -> None:
 def test_ghidra_export_missing_tool_is_degraded(tmp_path: Path, monkeypatch) -> None:
     binary = tmp_path / "httpd"
     binary.write_bytes(b"\x7fELF")
-    monkeypatch.setattr(ghidra_export.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(ghidra_export, "resolve_ghidra_headless", lambda: None)
     result = export_cfg_cg(binary, tmp_path / "graph.json")
     assert result["status"] == "degraded"
     assert result["available"] is False
@@ -331,18 +330,24 @@ def test_ghidra_export_executes_and_loads_real_artifact(tmp_path: Path, monkeypa
     binary = tmp_path / "httpd"
     binary.write_bytes(b"\x7fELF")
     output = tmp_path / "graph.json"
-    monkeypatch.setattr(ghidra_export.shutil, "which", lambda _name: "analyzeHeadless")
+    monkeypatch.setattr(ghidra_export, "resolve_ghidra_headless", lambda: "docker://test/ghidra")
 
-    def fake_run(command, timeout):
-        assert "ExportCfgCg.java" in command
+    def fake_export(source, target, backend, *, timeout):
+        assert source == binary
+        assert target == output
+        assert backend == "docker://test/ghidra"
         assert timeout == 900
         output.write_text(
             '{"functions":{"0x1":{"name":"handler","strings":[]}},' '"callgraph":{"0x1":[]}}',
             encoding="utf-8",
         )
-        return RunResult("analyzeHeadless", 0, "", "", "success")
+        return {
+            "status": "ok", "available": True,
+            "export": {"functions": {"0x1": {"name": "handler", "strings": []}},
+                       "callgraph": {"0x1": []}},
+        }
 
-    monkeypatch.setattr(ghidra_export, "run_command", fake_run)
+    monkeypatch.setattr(ghidra_export, "export_binary", fake_export)
     result = export_cfg_cg(binary, output)
     assert result["status"] == "ok"
     assert result["available"] is True

@@ -30,7 +30,7 @@ from tools.external.base import (
 )
 from tools.external.satc.parser import parse_satc_output
 
-IMAGE = "smile0304/satc"
+IMAGE = "firmhound/satc:local"
 
 # Script -> whether it needs the output of a previous run.
 SCRIPT_ORDER = ["ref2sink_cmdi", "ref2sink_bof", "ref2share"]

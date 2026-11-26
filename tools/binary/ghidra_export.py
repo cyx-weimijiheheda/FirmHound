@@ -15,27 +15,42 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from fsa.safety.policy_engine import PolicyEngine, SafetyViolation
 from fsa.utils.proc import run_command
 from tools.analysis.source_sink_rules import (
     classify_sink,
     classify_source,
     classify_validation,
 )
+from tools.external.backends import docker_available, docker_image_exists, run_docker
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT_DIR = _REPO_ROOT / "tools" / "external" / "bond" / "ghidra_scripts"
 _SCRIPT_NAME = "ExportCfgCg.java"
 _MAX_FUNCTIONS = 1000
 _MAX_STRING = 300
+DEFAULT_GHIDRA_IMAGE = "firmhound/firmrec:local"
 
 
 def resolve_ghidra_headless(config: dict[str, Any] | None = None) -> str | None:
-    """Return a usable analyzeHeadless path from config, env, PATH, or common dirs."""
+    """Resolve Docker first in auto mode; explicit native mode keeps host discovery."""
     configured = ""
+    section: dict[str, Any] = {}
     if isinstance(config, dict):
-        section = config.get("decompile")
-        if isinstance(section, dict):
+        raw_section = config.get("decompile")
+        if isinstance(raw_section, dict):
+            section = raw_section
             configured = str(section.get("ghidra_headless") or "")
+    backend = str(section.get("backend", "auto")).lower()
+    if backend in {"off", "none", "fallback"}:
+        return None
+    if backend in {"auto", "docker"}:
+        image = str(section.get("docker_image") or DEFAULT_GHIDRA_IMAGE)
+        available, _ = docker_available()
+        if available and docker_image_exists(image):
+            return f"docker://{image}"
+        if backend == "docker":
+            return None
     candidates = [
         configured,
         os.environ.get("GHIDRA_HEADLESS", ""),
@@ -75,7 +90,10 @@ def export_binary(
             "available": False,
             "limitation": f"binary does not exist: {binary}",
         }
-    if not Path(ghidra_headless).is_file():
+    docker_image = ""
+    if ghidra_headless.startswith("docker://"):
+        docker_image = ghidra_headless.removeprefix("docker://")
+    if not docker_image and not Path(ghidra_headless).is_file():
         return {
             "status": "degraded",
             "available": False,
@@ -89,6 +107,13 @@ def export_binary(
             "limitation": f"Ghidra export script missing: {script}",
         }
 
+    if docker_image:
+        try:
+            policy = PolicyEngine.from_yaml()
+            policy.check_path(binary)
+            policy.check_path(out_json)
+        except SafetyViolation as exc:
+            return {"status": "failed", "available": False, "limitation": str(exc)}
     out_json.parent.mkdir(parents=True, exist_ok=True)
     project_dir = out_json.parent / "ghidra-projects"
     project_dir.mkdir(parents=True, exist_ok=True)
@@ -107,13 +132,41 @@ def export_binary(
         str(out_json),
         "-deleteProject",
     ]
-    result = run_command(command, timeout=timeout, env={"LC_ALL": "C"})
-    if result.status != "success":
+    out_json.unlink(missing_ok=True)
+    if docker_image:
+        # Mount only the selected input file, the trusted script directory and output.
+        # Container paths are fixed; no host path is interpolated into shell code.
+        container_args = command[1:]
+        replacements = {
+            str(project_dir): "/work/output/ghidra-projects",
+            str(binary): f"/work/input/{binary.name}",
+            str(_SCRIPT_DIR): "/work/scripts",
+            str(out_json): f"/work/output/{out_json.name}",
+        }
+        result = run_docker(
+            docker_image,
+            [replacements.get(arg, arg) for arg in container_args],
+            entrypoint="/root/ghidra/support/analyzeHeadless",
+            mounts={
+                binary: f"/work/input/{binary.name}:ro",
+                _SCRIPT_DIR: "/work/scripts:ro",
+                out_json.parent: "/work/output",
+            },
+            extra_args=["--network", "none"],
+            timeout=timeout,
+            memory="8g",
+            env={"LC_ALL": "C"},
+        )
+        execution_status = "success" if result.status == "ok" else result.status
+    else:
+        result = run_command(command, timeout=timeout, env={"LC_ALL": "C"})
+        execution_status = result.status
+    if execution_status != "success":
         return {
-            "status": "degraded" if result.status == "timeout" else "failed",
+            "status": "degraded" if execution_status in {"timeout", "missing"} else "failed",
             "available": False,
             "limitation": (
-                f"Ghidra export {result.status}: "
+                f"Ghidra export {execution_status}: "
                 f"{(result.stderr or result.stdout)[-500:]}"
             ),
         }

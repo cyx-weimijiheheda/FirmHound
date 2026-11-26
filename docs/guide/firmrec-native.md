@@ -1,7 +1,7 @@
 # FirmRec 原生后端安装与接入（无 Docker）
 
 > 适用：希望在本机直接运行上游 [seclab-fudan/FirmRec](https://github.com/seclab-fudan/FirmRec)，
-> 而不是通过 `xylearn/firmrec-base` 镜像。上游官方只提供 Docker 安装；本文是按
+> 而不是通过 `firmhound/firmrec:local` 工作镜像。上游官方只提供 Docker 安装；本文是按
 > 其 `Dockerfile-base`、`requirements.txt`、`config.yaml`、`INPUT.md` 还原的等价步骤。
 
 ## 1. 版本矩阵（必须锁定）
@@ -133,7 +133,7 @@ external:
   enabled: true
   firmrec:
     enabled: true
-    backend: auto              # auto | local | docker
+    backend: local             # explicit native; auto now prefers a ready Docker image
     repo_dir: ./vendor/FirmRec
     python_bin: ./.venv-firmrec/bin/python
     ghidra_headless: /opt/ghidra/support/analyzeHeadless

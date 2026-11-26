@@ -105,6 +105,39 @@ def test_auto_backend_falls_back_to_docker(tmp_path: Path, monkeypatch) -> None:
     assert probe.backend == "docker"
 
 
+def test_auto_prefers_docker_over_complete_native_stack(tmp_path: Path, monkeypatch) -> None:
+    analyzer = _analyzer(tmp_path, backend="auto")
+    monkeypatch.setattr(runner, "docker_available", lambda: (True, "ok"))
+    monkeypatch.setattr(runner, "docker_image_exists", lambda _image: True)
+    assert analyzer._resolve_backend() == "docker"
+
+
+def test_doctor_docker_does_not_require_host_stack(tmp_path: Path, monkeypatch) -> None:
+    from tools.external.firmrec import doctor
+
+    monkeypatch.setattr(runner, "docker_available", lambda: (True, "ok"))
+    monkeypatch.setattr(runner, "docker_image_exists", lambda _image: True)
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    report = doctor.check_stack(
+        {"backend": "docker", "vuln_info_dir": str(_make_vuln_info(tmp_path))}
+    )
+    assert report["status"] == "ok"
+    assert report["backend"] == "docker"
+    assert report["missing"] == []
+    assert report["commands"] == {}
+    assert "image:" in doctor.format_report(report)
+
+
+def test_doctor_docker_reports_missing_image_without_native_requirements(monkeypatch) -> None:
+    from tools.external.firmrec import doctor
+
+    monkeypatch.setattr(runner, "docker_available", lambda: (True, "ok"))
+    monkeypatch.setattr(runner, "docker_image_exists", lambda _image: False)
+    report = doctor.check_stack({"backend": "docker"})
+    assert report["status"] == "missing"
+    assert report["missing"] == ["image:firmhound/firmrec:local"]
+
+
 def test_prepare_stages_raw_image_and_upstream_experiment(tmp_path: Path) -> None:
     analyzer = _analyzer(tmp_path)
     rootfs = tmp_path / "rootfs"

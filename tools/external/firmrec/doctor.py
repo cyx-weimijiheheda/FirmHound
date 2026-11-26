@@ -1,4 +1,4 @@
-"""Readiness checks for the native FirmRec backend.
+"""Readiness checks for the selected native or Docker FirmRec backend.
 
 This module is used by ``make firmrec-doctor``. It never raises and never runs
 the firmware pipeline; it only inspects the operator's machine and reports what
@@ -78,10 +78,34 @@ def check_local_stack(config: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def check_stack(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Check the backend that will actually run, without requiring duplicate host tools."""
+    analyzer = FirmrecAnalyzer(config)
+    if analyzer._resolve_backend() != "docker":  # noqa: SLF001 - same package
+        return check_local_stack(config)
+    probe = analyzer.probe()
+    return {
+        "status": "ok" if probe.available else "missing",
+        "backend": "docker",
+        "image": analyzer.image,
+        "version": probe.version,
+        "missing": probe.missing,
+        "warnings": [],
+        "commands": {},
+        "hints": {},
+        "note": probe.notes,
+    }
+
+
 def format_report(report: dict[str, Any]) -> str:
     """Render a short human-readable readiness report."""
     lines = [f"FirmRec backend: {report.get('backend', 'unknown')} ({report.get('status')})"]
-    for key in ("repo_dir", "python_bin", "ghidra_headless", "firmrec_static_jar"):
+    keys = (
+        ("image", "version")
+        if report.get("backend") == "docker"
+        else ("repo_dir", "python_bin", "ghidra_headless", "firmrec_static_jar")
+    )
+    for key in keys:
         lines.append(f"  {key}: {report.get(key) or '<not configured>'}")
     if report.get("missing"):
         lines.append("  missing:")
@@ -97,4 +121,4 @@ def format_report(report: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["check_local_stack", "format_report"]
+__all__ = ["check_local_stack", "check_stack", "format_report"]

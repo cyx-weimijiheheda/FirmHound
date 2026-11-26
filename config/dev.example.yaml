@@ -21,7 +21,8 @@ analysis:
 # Optional Ghidra headless enrichment for the DECOMPILE stage. When Ghidra is
 # unavailable the stage degrades to the pyelftools fallback and the pipeline continues.
 decompile:
-  backend: auto                    # auto | ghidra | fallback
+  backend: auto                    # auto (Docker first) | docker | ghidra (native) | fallback
+  docker_image: firmhound/firmrec:local # reuse its Ghidra; no host install needed
   ghidra_headless: ""              # empty -> GHIDRA_HEADLESS or analyzeHeadless on PATH
   max_binaries: 5                  # top-N by triage score (httpd / vendor .so first)
   timeout_s: 180                   # per-binary Ghidra cap
@@ -97,7 +98,7 @@ external:
 
   satc:
     enabled: false
-    image: smile0304/satc          # docker image; pulled on first enabled run
+    image: firmhound/satc:local    # build docker/satc.Dockerfile before enabling
     taint_check: true             # angr taint engine (much slower when on)
     scripts:                       # Ghidra scripts to run, in order
       - ref2sink_cmdi
@@ -111,8 +112,8 @@ external:
     enabled: false
     # Recurring-vulnerability detection. Requires a known-vuln signature DB and
     # is isolated from blind benchmark runs.
-    backend: auto                  # auto | local | docker
-    # Native backend (recommended). repo_dir must be inside a safety-whitelisted
+    backend: auto                  # auto (Docker first) | local | docker
+    # Optional native backend. repo_dir must be inside a safety-whitelisted
     # path (e.g. ./vendor/FirmRec) or explicitly added to config/safety.yaml.
     repo_dir: ""                   # or FSA_FIRMREC_REPO_DIR
     python_bin: ""                 # FirmRec Python 3.9 env; or FSA_FIRMREC_PYTHON_BIN
@@ -124,8 +125,8 @@ external:
     vendor: unknown                # staged images/<VENDOR>/ directory
     image_name: ""                 # optional override for the staged image name
     allow_rootfs_tar: true         # rootfs-only runs are packed as a tar (limited)
-    # Docker fallback.
-    image: xylearn/firmrec-base    # pulled on first enabled docker run
+    # Docker working image (includes upstream source and dependencies).
+    image: firmhound/firmrec:local # build docker/firmrec.Dockerfile before enabling
     # Upstream vuln_info (<VENDOR>/<NAME>/meta.json + vulnerable firmware).
     vuln_info_dir: ""              # operator-prepared upstream tree (preferred)
     official_vuln_info_path: ""    # upstream directory when vuln_info_source=official

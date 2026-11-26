@@ -1,0 +1,27 @@
+# Docker working images built with docker/*.Dockerfile; see docs/guide/external-docker.md.
+decompile:
+  backend: docker
+  docker_image: firmhound/firmrec:local
+external:
+  enabled: true
+  workdir: ./tmp/external
+  timeout_s: 3600
+  satc:
+    enabled: true
+    image: firmhound/satc:local
+    taint_check: true
+    scripts: [ref2sink_cmdi, ref2sink_bof, ref2share]
+    enable_share2sink: true
+    max_bins: 3
+    memory: 16g
+  firmrec:
+    enabled: false
+    backend: docker
+    image: firmhound/firmrec:local
+    vuln_info_source: official
+    official_vuln_info_path: ./vendor/firmrec-data/vuln_info
+    timeout_s: 7200
+  klee:
+    enabled: false
+  bond:
+    enabled: false

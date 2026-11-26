@@ -243,11 +243,11 @@ def cmd_ext_smoke(args: argparse.Namespace) -> int:
 def cmd_firmrec_doctor(args: argparse.Namespace) -> int:
     """Probe the FirmRec backend without running the pipeline."""
     from tools.external.adapter import _load_global_external
-    from tools.external.firmrec.doctor import check_local_stack, format_report
+    from tools.external.firmrec.doctor import check_stack, format_report
 
     external = _load_global_external()
     cfg = dict(external.get("firmrec", {}) or {})
-    report = check_local_stack(cfg)
+    report = check_stack(cfg)
     print(format_report(report))
     print(json.dumps(report, indent=2, ensure_ascii=False))
     return 0

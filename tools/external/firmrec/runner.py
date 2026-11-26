@@ -14,9 +14,9 @@ analyzer is gated by two independent switches
 Two execution backends are supported:
 
 * ``local``  -- run a native upstream checkout with the operator's Python env.
-* ``docker`` -- run the ``xylearn/firmrec-base`` image (kept as a fallback).
+* ``docker`` -- run the built ``firmhound/firmrec:local`` working image.
 
-``backend: auto`` prefers a local checkout and falls back to Docker. The adapter
+``backend: auto`` prefers Docker and falls back to a configured local checkout. The adapter
 stages upstream's real ``inout`` contract (``images/<VENDOR>/<IMAGE>``,
 ``vuln_info/<VENDOR>/<NAME>/meta.json``, ``experiment.json``) and parses
 ``inout/emu_results/result.csv``. Missing tools or inputs always degrade to
@@ -55,7 +55,7 @@ from tools.external.firmrec.staging import (
     write_local_config,
 )
 
-IMAGE = "xylearn/firmrec-base"
+IMAGE = "firmhound/firmrec:local"
 UPSTREAM_RESULT_STEP = "4.4"
 
 
@@ -122,9 +122,6 @@ class FirmrecAnalyzer(ExternalAnalyzer):
             return self._resolved_backend
         if self.backend in {"local", "docker"}:
             self._resolved_backend = self.backend
-            return self._resolved_backend
-        if not self._local_missing() and self._repo_policy_error() is None:
-            self._resolved_backend = "local"
             return self._resolved_backend
         ok, _ = docker_available()
         if ok and docker_image_exists(self.image):

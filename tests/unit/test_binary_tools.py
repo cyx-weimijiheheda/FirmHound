@@ -158,7 +158,8 @@ def test_build_elf64_round_trip() -> None:
     assert len(data) > 64
 
 
-def test_execute_decompile_persists_its_limitation(tmp_path: Path) -> None:
+def test_execute_decompile_persists_its_limitation(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("tools.binary.pipeline.resolve_ghidra_headless", lambda _config: None)
     run = tmp_path / "run"
     save_json(
         run / "artifacts" / "binary_summaries.json",
@@ -397,3 +398,50 @@ def test_execute_decompile_stops_when_total_timeout_exhausted(
     ]
     assert skipped
     assert result["analyzed_binaries"] < 2
+
+
+def test_select_binaries_scores_before_truncating(tmp_path: Path) -> None:
+    """Vendor daemons must not lose the budget to alphabetically earlier libs.
+
+    Regression: ``execute_triage`` used to slice ``inventory["elf_paths"]`` in
+    alphabetical order, so ``bin/`` and ``lib/`` filled every slot and a tapped
+    web server under ``usr/sbin/`` was never scored.
+    """
+    from tools.binary.pipeline import _select_binaries
+
+    rootfs = tmp_path / "root"
+    (rootfs / "lib").mkdir(parents=True)
+    (rootfs / "usr" / "sbin").mkdir(parents=True)
+
+    # Many low-signal shared objects that sort first alphabetically.
+    for index in range(30):
+        write_elf64(rootfs / "lib" / f"libaaa{index:02d}.so", imports=["memcpy"])
+    # One high-signal daemon that sorts last, wired to the web attack surface.
+    write_elf64(
+        rootfs / "usr" / "sbin" / "zzz-httpd",
+        imports=["system", "popen", "strcpy", "sprintf"],
+        rodata_strings=["/goform/", "/cgi-bin/"],
+        defined_syms=["zzz_handler"],
+    )
+
+    elf_paths = sorted(
+        p.relative_to(rootfs).as_posix()
+        for p in rootfs.rglob("*")
+        if p.is_file() and p.read_bytes()[:4] == b"\x7fELF"
+    )
+    assert elf_paths[-1] == "usr/sbin/zzz-httpd"
+
+    selected = _select_binaries(rootfs, elf_paths, {}, [], max_binaries=5)
+    assert "usr/sbin/zzz-httpd" in selected
+    assert len(selected) == 5
+
+
+def test_select_binaries_keeps_all_when_under_budget(tmp_path: Path) -> None:
+    from tools.binary.pipeline import _select_binaries
+
+    rootfs = tmp_path / "root"
+    rootfs.mkdir()
+    write_elf64(rootfs / "a", imports=["memcpy"])
+    write_elf64(rootfs / "b", imports=["strcpy"])
+    elf_paths = ["a", "b"]
+    assert _select_binaries(rootfs, elf_paths, {}, [], max_binaries=10) == ["a", "b"]
