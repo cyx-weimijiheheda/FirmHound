@@ -273,6 +273,60 @@ readelf -s httpd | grep system
 
 ---
 
+## 7.5 先校验 sink 覆盖：厂商封装最容易漏
+
+在逐条审候选之前，先确认**厂商自己的封装函数**有没有被认作 sink。厂商常把
+`system`/`execvp` 包一层再全固件调用，规则库若只写了 libc 原名，这些调用点在
+候选里根本不会出现——报告一片干净，实际是漏检。
+
+RT-AX58U 的例子：ASUS 在 `libshared.so` 里有个
+
+```c
+int _eval(char **argv, int, int, int *) { fork(); ... execvp(argv[0], argv); ... }
+```
+
+19 个 ELF 导入它，`httpd` 单文件 25 个调用点。因为规则里只有 `execvp`，
+下划线让子串匹配失配，`_eval` 全程不可见。补上精确匹配后候选从 2958 涨到 2975。
+
+**自查方法**：把固件里所有导入的危险函数名列出来，过一遍 `classify_sink`，
+没被分类的就是盲区。
+
+```bash
+# 列出各 ELF 的可疑导入
+for f in $(find rootfs -name '*.so*' -o -perm -u+x); do
+  nm -D "$f" 2>/dev/null | awk '/ U /{print $2}'
+done | sort -u > /tmp/imports.txt
+
+# 逐个问规则库认不认识；只挑像执行封装的短名，避免 timeval/slicethread 这类噪声
+python3 - <<'PY'
+import re
+from tools.analysis.source_sink_rules import classify_sink
+
+WORD = re.compile(r'(^|_)(system|exec\w*|popen|shell|spawn|cmd|eval)($|_)')
+for name in open('/tmp/imports.txt'):
+    bare = name.strip().split('@')[0]
+    if not WORD.search(bare.lower()):
+        continue
+    if classify_sink(bare) is None:
+        print('未分类:', bare)
+PY
+```
+
+RT-AX58U 上这段会打出 30 来个名字，按语义分三类处理：
+
+| 类型 | 例子 | 处理 |
+|---|---|---|
+| 真盲区 | `_eval`（修复前） | 补进 `SINK_RULES`，加精确匹配 |
+| 上游同名封装 | `run_cmd`（netatalk）、`process_start_shell`（strongswan） | 其内部 `popen`/`execve` 与调用点同库，同库调用链能连上，通常不用补 |
+| 校验/非执行函数 | `check_cmd_injection_blacklist`、`cmd_init`、`ENGINE_ctrl_cmd` | 直接排除 |
+
+判断关键是**封装与真正 sink 是否跨二进制**：同库的靠调用链，跨库的必须在导入侧分类。
+
+**注意封装不等于 shell**：`_eval` 走 `execvp(argv)`，不经 shell，argv 后续元素
+即使含 `;`、`$()` 也只是普通参数。真正要做拼接检查的是 `system`/`popen`。
+
+---
+
 ## 8. 第七步（可选进阶）：动态验证
 
 想证明漏洞"真的能触发"，在本地做仿真（安全门四项全过才放行：授权 + 本地实验 + 私有网段 + 基线就绪）：
