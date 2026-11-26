@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "fixtures"))
 from elf_builder import write_mips32_pic_elf  # noqa: E402
 
 from tools.analysis.source_sink_rules import classify_sink, classify_source
-from tools.audit.audit_constants import skip_shared_object
+from tools.audit.audit_constants import CHAIN_SINKS, skip_shared_object
 from tools.binary.call_chain import SUPPORTED_ARCHES, recover_chains
 from tools.binary.pipeline import _decompile_priority
 
@@ -95,3 +95,41 @@ def test_mips_recover_chains_on_libproject_strcpy() -> None:
     parse = next(item for item in strcpy_sites if item.get("func_addr") == 0x1F88)
     assert parse.get("func_name") == "parse_special_char"
     assert parse.get("same_func_source") is True
+
+
+def test_chain_sinks_cover_every_command_execution_wrapper() -> None:
+    """Every command-execution sink must be recoverable, not just ``doSystemCmd``.
+
+    ``_enrich_with_chain`` bails out when the sink is absent from ``CHAIN_SINKS``,
+    so a missing entry silently leaves the candidate at ``call-chain-not-proven``
+    even though the disassembler resolves the call site. ASUS RT-AX58U lost 17
+    candidates that way: its ``doSystem`` and ``_eval`` helpers were classified as
+    sinks but never recovered.
+    """
+    required = {
+        "system",
+        "popen",
+        "doSystem",
+        "doSystemCmd",
+        "_eval",
+        "execve",
+        "execvp",
+        "execv",
+        "execl",
+        "execlp",
+        "execle",
+    }
+    missing = required - CHAIN_SINKS
+    assert not missing, f"command-execution sinks missing from CHAIN_SINKS: {sorted(missing)}"
+
+
+def test_chain_sinks_are_classified_as_sinks() -> None:
+    """A name may only be recovered if the rule set agrees it is a sink."""
+    for name in sorted(CHAIN_SINKS):
+        classified = classify_sink(name)
+        assert classified is not None, name
+        assert classified["type"] in {
+            "command_execution",
+            "memory_safety",
+            "format_string",
+        }, (name, classified)

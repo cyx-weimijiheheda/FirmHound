@@ -5,12 +5,28 @@ from __future__ import annotations
 from pathlib import Path
 
 # Sink imports worth recovering an actual call site for (ARM32 / MIPS disassembly).
+#
+# Every command-execution sink must appear here, otherwise the candidate is
+# created but ``_enrich_with_chain`` returns early and the run keeps reporting
+# ``call-chain-not-proven`` for a sink the disassembler can perfectly well
+# resolve. ``doSystemCmd`` alone was not enough: ASUS ships both ``doSystem``
+# and the ``_eval`` fork+execvp wrapper, and the whole exec* family reaches the
+# shell without going through ``system``.
 CHAIN_SINKS = frozenset(
     {
         "doSystemCmd",
+        "doSystem",
         "system",
         "popen",
         "execve",
+        "execvp",
+        "execv",
+        "execl",
+        "execlp",
+        "execle",
+        "_eval",
+        "lxmldbc_system",
+        "alpha_system2",
         "sprintf",
         "vsprintf",
         "strcpy",
