@@ -62,6 +62,32 @@ def test_classify_sink_command_execution() -> None:
     assert result["type"] == "command_execution"
 
 
+def test_classify_sink_asus_eval_wrapper() -> None:
+    """ASUS ``_eval`` is a fork+execvp wrapper and must count as a sink.
+
+    RT-AX58U routes 25 ``httpd`` call sites and 19 ELFs through it; without the
+    rule the firmware's primary command-execution wrapper produced no candidate
+    at all.
+    """
+    for name in ("_eval", "_eval@GLIBC_2.4"):
+        result = classify_sink(name)
+        assert result is not None, name
+        assert result["type"] == "command_execution"
+    assert classify_sink("_eval@GLIBC_2.4")["function"] == "_eval"
+
+
+def test_classify_sink_ignores_eval_substring_lookalikes() -> None:
+    """``_eval`` must match exactly: these share the substring but are not sinks."""
+    for name in (
+        "_cpu_eval",
+        "_cpu_mask_eval",
+        "av_expr_eval",
+        "av_expr_parse_and_eval",
+        "CT_POLICY_EVAL_CTX_new",
+    ):
+        assert classify_sink(name) is None, name
+
+
 def test_classify_sink_memory_safety() -> None:
     result = classify_sink("strcpy")
     assert result is not None

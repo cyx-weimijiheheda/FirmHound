@@ -157,6 +157,14 @@ SINK_RULES: dict[str, dict[str, Any]] = {
             # one the risk scorer does not know about.
             "os.execute", "os.exec", "posix.exec", "os.spawn", "dofile", "loadstring",
         ],
+        # ASUS routers route nearly every shell call through ``_eval(argv, ...)``,
+        # a ``fork`` + ``execvp(argv[0], argv)`` wrapper in ``libshared.so``.
+        # RT-AX58U has 19 ELFs importing it and 25 call sites in ``httpd`` alone,
+        # yet it matched no pattern: the leading underscore defeats the ``execvp``
+        # substring. It must be exact — ``_cpu_eval``, ``av_expr_eval`` and
+        # ``CT_POLICY_EVAL_CTX_*`` all contain the ``_eval`` substring but are
+        # signal/CPU helpers and an OpenSSL context type, not command execution.
+        "exact": ["_eval"],
     },
     "memory_safety": {
         "patterns": [
@@ -240,10 +248,17 @@ def classify_sink(name: str) -> dict[str, Any] | None:
     Imported names on some toolchains carry a version suffix
     (``system@GLIBC_2.2.5``). Strip it for the candidate identity so the
     versioned and unversioned imports do not become two different candidates.
+
+    Rules may declare ``exact`` for names whose spelling is too generic for
+    substring matching (``_eval`` would otherwise match ``_cpu_eval``).
     """
+    bare = name.split("@", 1)[0].strip()
     for category, rule in SINK_RULES.items():
-        if _match(name, rule["patterns"]):
-            return {"function": name.split("@", 1)[0], "type": category}
+        exact = rule.get("exact")
+        if exact and bare.lower() in {item.lower() for item in exact}:
+            return {"function": bare, "type": category}
+        if _match(bare, rule["patterns"]):
+            return {"function": bare, "type": category}
     return None
 
 
